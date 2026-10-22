@@ -1,0 +1,30 @@
+name: srd-photo-storage
+services:
+  mysql:
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: srd_files_probe
+    networks: [isolated]
+    mem_limit: 512m
+    tmpfs: [/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", "mysql --protocol=TCP -h 127.0.0.1 -uroot -e 'SELECT 1' srd_files_probe >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      start_period: 90s
+      retries: 30
+  check:
+    build:
+      context: ..
+      dockerfile: docker/photo-storage.Dockerfile
+    networks: [isolated]
+    volumes:
+      - ../services/files:/work/services/files:ro
+      - ../tools/check-photo-storage.php:/work/tools/check-photo-storage.php:ro
+      - ../.local/photo-storage:/work/.local/photo-storage
+    depends_on:
+      mysql: {condition: service_healthy}
+networks:
+  isolated:
+    internal: true
