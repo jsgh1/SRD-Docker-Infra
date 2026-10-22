@@ -1,0 +1,104 @@
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+
+const fixture = JSON.parse(fs.readFileSync(process.env.SRD_BROWSER_FIXTURE));
+const mailUrl = process.env.SRD_MAILPIT_URL || 'http://localhost:8025';
+
+async function login(page, role) {
+  await page.goto(`/j/${fixture.codeA}/login`);
+  await page.getByLabel('Correo electrónico', { exact: true }).fill(fixture.users[role].email);
+  await page.getByLabel('Contraseña', { exact: true }).fill(fixture.password);
+  await page.getByRole('button', { name: 'términos y condiciones', exact: true }).click();
+  await page.getByRole('button', { name: 'Aceptar términos', exact: true }).click();
+  await page.getByRole('button', { name: 'Ingresar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Ingresa tu código' })).toBeVisible();
+  let message;
+  await expect.poll(async () => {
+    const list = await (await page.request.get(`${mailUrl}/api/v1/messages`)).json();
+    message = list.messages?.find(item => item.Subject === 'Tu código de seguridad de SRD' && item.To.some(to => to.Address === fixture.users[role].email));
+    return !!message;
+  }, { timeout: 85000 }).toBe(true);
+  const content = await (await page.request.get(`${mailUrl}/api/v1/message/${message.ID}`)).json();
+  await page.getByLabel('Código de verificación').fill(content.Text.match(/\b\d{6}\b/)[0]);
+  await page.getByRole('button', { name: 'Confirmar código' }).click();
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Home', exact: true })).toBeVisible();
+}
+
+test('inventory furniture count, adjustments, historical retirement and permissions', async ({ page, browser }) => {
+  test.setTimeout(240000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await login(page, 'treasurer');
+  await page.locator('.sidebar').getByRole('button', { name: 'Inventario' }).click();
+  await expect(page.getByRole('heading', { name: 'Inventario' })).toBeVisible();
+  await page.getByRole('button', { name: 'Registrar bien' }).click();
+  let dialog = page.getByRole('dialog', { name: 'Registrar bien' });
+  await dialog.getByLabel('Código').fill('SILLAS-E2E');
+  await dialog.getByLabel('Nombre (ES)').fill('Sillas comunitarias');
+  await dialog.getByLabel('Nombre (EN)').fill('Community chairs');
+  await dialog.getByLabel('Categoría (ES)').fill('Mobiliario');
+  await dialog.getByLabel('Categoría (EN)').fill('Furniture');
+  await dialog.getByLabel('Ubicación (ES)').fill('Salón comunal');
+  await dialog.getByLabel('Ubicación (EN)').fill('Community hall');
+  await dialog.getByLabel('Condición (ES)').fill('Bueno');
+  await dialog.getByLabel('Condición (EN)').fill('Good');
+  await dialog.getByLabel('Cantidad inicial').fill('34');
+  await dialog.getByRole('button', { name: 'Guardar bien' }).click();
+  await expect(page.getByRole('dialog', { name: 'SILLAS-E2E · Sillas comunitarias' })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Registrar movimiento' }).click();
+  dialog = page.getByRole('dialog', { name: 'Movimiento de Sillas comunitarias' });
+  await dialog.getByLabel('Operación').selectOption('out');
+  await dialog.getByLabel('Cantidad', { exact: true }).fill('5');
+  await dialog.getByLabel('Motivo (ES)').fill('Entrega para evento');
+  await dialog.getByLabel('Motivo (EN)').fill('Delivery for event');
+  await dialog.getByRole('button', { name: 'Confirmar movimiento' }).click();
+  await expect(page.getByRole('dialog', { name: 'SILLAS-E2E · Sillas comunitarias' }).getByText('29 unidad')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Registrar movimiento' }).click();
+  dialog = page.getByRole('dialog', { name: 'Movimiento de Sillas comunitarias' });
+  await dialog.getByLabel('Operación').selectOption('out');
+  await dialog.getByLabel('Cantidad', { exact: true }).fill('30');
+  await dialog.getByLabel('Motivo (ES)').fill('Salida imposible');
+  await dialog.getByLabel('Motivo (EN)').fill('Impossible stock out');
+  await dialog.getByRole('button', { name: 'Confirmar movimiento' }).click();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await dialog.getByLabel('Operación').selectOption('adjust');
+  await dialog.getByLabel('Nueva existencia').fill('0');
+  await dialog.getByLabel('Motivo (ES)').fill('Conteo físico documentado');
+  await dialog.getByLabel('Motivo (EN)').fill('Documented physical count');
+  await dialog.getByRole('button', { name: 'Confirmar movimiento' }).click();
+  await expect(page.getByRole('dialog', { name: 'SILLAS-E2E · Sillas comunitarias' }).getByText('0 unidad')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Dar de baja' }).click();
+  dialog = page.getByRole('dialog', { name: 'Dar de baja Sillas comunitarias' });
+  await dialog.getByLabel('Motivo de la baja (ES)').fill('Retiro documentado del inventario');
+  await dialog.getByLabel('Motivo de la baja (EN)').fill('Documented inventory retirement');
+  await dialog.getByRole('button', { name: 'Confirmar baja' }).click();
+  await expect(page.getByRole('dialog', { name: 'SILLAS-E2E · Sillas comunitarias' }).getByText('De baja')).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('row')).toHaveCount(5);
+  await page.getByRole('dialog').getByRole('button', { name: 'Cerrar' }).click();
+  await page.getByRole('region', { name: 'Bienes de inventario' }).getByLabel('Estado').selectOption('retired');
+  await expect(page.getByRole('row').filter({ hasText: 'SILLAS-E2E' })).toBeVisible();
+  const viewerContext = await browser.newContext({ baseURL: process.env.SRD_TEST_URL || 'http://localhost:8080' });
+  try {
+    const viewer = await viewerContext.newPage();
+    await login(viewer, 'viewer');
+    await expect(viewer.locator('.sidebar').getByRole('button', { name: 'Inventario' })).toHaveCount(0);
+    expect((await viewer.request.get('/api/v1/assets')).status()).toBe(403);
+  } finally { await viewerContext.close(); }
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expect(page.getByRole('heading', { name: 'Inventario' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+  await page.locator('.profile-trigger').click();
+  await page.getByLabel('Idioma', { exact: true }).selectOption('en');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('.record-desktop-table')).toBeHidden();
+  const englishAsset = page.locator('.record-mobile-card').filter({ hasText: 'SILLAS-E2E' });
+  await expect(englishAsset).toContainText('Community chairs');
+  await expect(englishAsset).toContainText('Community hall');
+  await englishAsset.getByRole('button', { name: 'View asset' }).click();
+  const englishDetail = page.getByRole('dialog', { name: 'SILLAS-E2E · Community chairs' });
+  await expect(englishDetail.getByText('Furniture')).toBeVisible();
+  await expect(englishDetail.getByText('Good')).toBeVisible();
+  await expect(englishDetail.getByText('Documented inventory retirement')).toBeVisible();
+  await englishDetail.getByRole('button', { name: 'Close' }).click();
+  expect(errors).toEqual([]);
+});

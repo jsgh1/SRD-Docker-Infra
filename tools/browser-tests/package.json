@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@playwright/test": "1.58.2"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "^5.4.624",
+    "prettier": "3.8.1"
+  }
+}
