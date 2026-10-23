@@ -1,0 +1,31 @@
+name: srd-file-safety
+services:
+  antivirus:
+    image: clamav/clamav:1.4.6@sha256:71fbb76b397cd84a90043caf1178a7f81bd0c131a031e7b0619afd721fbfad41
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "true"
+      CLAMAV_NO_MILTERD: "true"
+    networks: [isolated]
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+      retries: 12
+  check:
+    build:
+      context: ..
+      dockerfile: docker/file-safety.Dockerfile
+    networks: [isolated]
+    environment:
+      SRD_CLAMD_ADDRESS: tcp://antivirus:3310
+    volumes:
+      - ../services/files/app:/work/services/files/app:ro
+      - ../tools/check-file-safety.php:/work/tools/check-file-safety.php:ro
+      - ../.local/file-safety:/work/.local/file-safety
+    depends_on:
+      antivirus: {condition: service_healthy}
+networks:
+  isolated:
+    internal: true

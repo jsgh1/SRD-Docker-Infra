@@ -1,0 +1,12 @@
+[Unit]
+Description=Respaldo cifrado de SRD
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash /opt/srd/scripts/backup-production.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

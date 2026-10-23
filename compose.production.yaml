@@ -1,0 +1,1736 @@
+{
+  "name": "srd-production",
+  "services": {
+    "gateway": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "gateway"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-gateway",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_GATEWAY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_gateway",
+        "DB_USERNAME": "srd_gateway",
+        "DB_PASSWORD": "${DB_PASSWORD_GATEWAY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "REVERB_APP_KEY": "${REVERB_APP_KEY:?Define REVERB_APP_KEY}",
+        "REVERB_APP_ID": "${REVERB_APP_ID:?Define REVERB_APP_ID}",
+        "REVERB_APP_SECRET": "${REVERB_APP_SECRET:?Ejecuta scripts/Initialize.ps1}",
+        "WEBRTC_STUN_URL": "${WEBRTC_STUN_URL:-}",
+        "WEBRTC_TURN_URL": "${WEBRTC_TURN_URL:-}",
+        "WEBRTC_TURN_SECRET": "${WEBRTC_TURN_SECRET:-}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "NOTIFICATIONS_URL": "http://notifications:8000",
+        "TREASURY_URL": "http://treasury:8000",
+        "INVENTORY_URL": "http://inventory:8000",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "gateway_sessions:/app/services/gateway/storage/framework/sessions"
+      ],
+      "image": "srd-gateway:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "identity": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "identity"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-identity",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_IDENTITY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_identity",
+        "DB_USERNAME": "srd_identity",
+        "DB_PASSWORD": "${DB_PASSWORD_IDENTITY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal",
+        "smtp_egress"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_identity:/app/services/identity/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-identity:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "identity-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-identity",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_IDENTITY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_identity",
+        "DB_USERNAME": "srd_identity",
+        "DB_PASSWORD": "${DB_PASSWORD_IDENTITY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal",
+        "smtp_egress"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "identity": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_identity:/app/services/identity/storage/framework/scheduler-health"
+      ],
+      "image": "srd-identity:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "configuration": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "configuration"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-configuration",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CONFIGURATION:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_configuration",
+        "DB_USERNAME": "srd_configuration",
+        "DB_PASSWORD": "${DB_PASSWORD_CONFIGURATION:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_configuration:/app/services/configuration/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-configuration:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "configuration-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-configuration",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CONFIGURATION:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_configuration",
+        "DB_USERNAME": "srd_configuration",
+        "DB_PASSWORD": "${DB_PASSWORD_CONFIGURATION:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "configuration": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_configuration:/app/services/configuration/storage/framework/scheduler-health"
+      ],
+      "image": "srd-configuration:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "records": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "records"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-records",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_RECORDS:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_records",
+        "DB_USERNAME": "srd_records",
+        "DB_PASSWORD": "${DB_PASSWORD_RECORDS:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_records:/app/services/records/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-records:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "records-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-records",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_RECORDS:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_records",
+        "DB_USERNAME": "srd_records",
+        "DB_PASSWORD": "${DB_PASSWORD_RECORDS:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "records": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_records:/app/services/records/storage/framework/scheduler-health"
+      ],
+      "image": "srd-records:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "audit": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "audit"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-audit",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_AUDIT:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_audit",
+        "DB_USERNAME": "srd_audit",
+        "DB_PASSWORD": "${DB_PASSWORD_AUDIT:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "image": "srd-audit:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "files": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "files"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-files",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_FILES:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_files",
+        "DB_USERNAME": "srd_files",
+        "DB_PASSWORD": "${DB_PASSWORD_FILES:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "files_objects:/app/services/files/storage/app/private",
+        "antivirus_signatures:/var/lib/clamav:ro",
+        "scheduler_health_files:/app/services/files/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-files:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "files-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-files",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_FILES:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_files",
+        "DB_USERNAME": "srd_files",
+        "DB_PASSWORD": "${DB_PASSWORD_FILES:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "volumes": [
+        "files_objects:/app/services/files/storage/app/private",
+        "antivirus_signatures:/var/lib/clamav:ro",
+        "scheduler_health_files:/app/services/files/storage/framework/scheduler-health"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "files": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "image": "srd-files:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "calendar": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "calendar"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-calendar",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CALENDAR:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_calendar",
+        "DB_USERNAME": "srd_calendar",
+        "DB_PASSWORD": "${DB_PASSWORD_CALENDAR:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "NOTIFICATIONS_URL": "http://notifications:8000",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_calendar:/app/services/calendar/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-calendar:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "calendar-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-calendar",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CALENDAR:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_calendar",
+        "DB_USERNAME": "srd_calendar",
+        "DB_PASSWORD": "${DB_PASSWORD_CALENDAR:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "NOTIFICATIONS_URL": "http://notifications:8000",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "calendar": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_calendar:/app/services/calendar/storage/framework/scheduler-health"
+      ],
+      "image": "srd-calendar:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "antivirus": {
+      "image": "clamav/clamav:1.4.6@sha256:71fbb76b397cd84a90043caf1178a7f81bd0c131a031e7b0619afd721fbfad41",
+      "environment": {
+        "CLAMAV_NO_FRESHCLAMD": "true",
+        "CLAMAV_NO_MILTERD": "true",
+        "CLAMD_CONF_SelfCheck": "60",
+        "CLAMD_CONF_ConcurrentDatabaseReload": "no"
+      },
+      "networks": [
+        "internal"
+      ],
+      "volumes": [
+        "antivirus_signatures:/var/lib/clamav"
+      ],
+      "mem_limit": "2g",
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "clamdcheck.sh"
+        ],
+        "interval": "10s",
+        "timeout": "5s",
+        "start_period": "90s",
+        "retries": 18
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "antivirus-updater": {
+      "image": "clamav/clamav:1.4.6@sha256:71fbb76b397cd84a90043caf1178a7f81bd0c131a031e7b0619afd721fbfad41",
+      "command": [
+        "sh",
+        "/srd-update-signatures.sh"
+      ],
+      "networks": [
+        "signature_updates"
+      ],
+      "volumes": [
+        "antivirus_signatures:/var/lib/clamav",
+        "./docker/update-signatures.sh:/srd-update-signatures.sh:ro"
+      ],
+      "mem_limit": "384m",
+      "healthcheck": {
+        "disable": true
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "mysql": {
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "environment": {
+        "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_GATEWAY": "${DB_PASSWORD_GATEWAY:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_IDENTITY": "${DB_PASSWORD_IDENTITY:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_CONFIGURATION": "${DB_PASSWORD_CONFIGURATION:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_RECORDS": "${DB_PASSWORD_RECORDS:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_AUDIT": "${DB_PASSWORD_AUDIT:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_FILES": "${DB_PASSWORD_FILES:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_CALENDAR": "${DB_PASSWORD_CALENDAR:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_NOTIFICATIONS": "${DB_PASSWORD_NOTIFICATIONS:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_TREASURY": "${DB_PASSWORD_TREASURY:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_INVENTORY": "${DB_PASSWORD_INVENTORY:?Ejecuta scripts/Initialize.ps1}",
+        "DB_PASSWORD_CHAT": "${DB_PASSWORD_CHAT:?Ejecuta scripts/Initialize.ps1}"
+      },
+      "volumes": [
+        "mysql_data:/var/lib/mysql",
+        "./database/03_dcl/01_grants/initialize-services.sh:/docker-entrypoint-initdb.d/01-services.sh:ro"
+      ],
+      "networks": [
+        "internal"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "--protocol=TCP",
+          "-h",
+          "127.0.0.1"
+        ],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 20
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "web": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/web-production.Dockerfile"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "gateway": {
+          "condition": "service_healthy"
+        }
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "notifications": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "notifications"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-notifications",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_NOTIFICATIONS:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_notifications",
+        "DB_USERNAME": "srd_notifications",
+        "DB_PASSWORD": "${DB_PASSWORD_NOTIFICATIONS:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_notifications:/app/services/notifications/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-notifications:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "notifications-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-notifications",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_NOTIFICATIONS:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_notifications",
+        "DB_USERNAME": "srd_notifications",
+        "DB_PASSWORD": "${DB_PASSWORD_NOTIFICATIONS:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "notifications": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_notifications:/app/services/notifications/storage/framework/scheduler-health"
+      ],
+      "image": "srd-notifications:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "treasury": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "treasury"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-treasury",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_TREASURY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_treasury",
+        "DB_USERNAME": "srd_treasury",
+        "DB_PASSWORD": "${DB_PASSWORD_TREASURY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_treasury:/app/services/treasury/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-treasury:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "treasury-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-treasury",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_TREASURY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_treasury",
+        "DB_USERNAME": "srd_treasury",
+        "DB_PASSWORD": "${DB_PASSWORD_TREASURY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "audit": {
+          "condition": "service_healthy"
+        },
+        "treasury": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_treasury:/app/services/treasury/storage/framework/scheduler-health"
+      ],
+      "image": "srd-treasury:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "inventory": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "inventory"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-inventory",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_INVENTORY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_inventory",
+        "DB_USERNAME": "srd_inventory",
+        "DB_PASSWORD": "${DB_PASSWORD_INVENTORY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_inventory:/app/services/inventory/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-inventory:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "inventory-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-inventory",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_INVENTORY:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_inventory",
+        "DB_USERNAME": "srd_inventory",
+        "DB_PASSWORD": "${DB_PASSWORD_INVENTORY:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "audit": {
+          "condition": "service_healthy"
+        },
+        "inventory": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_inventory:/app/services/inventory/storage/framework/scheduler-health"
+      ],
+      "image": "srd-inventory:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "chat": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php-production.Dockerfile",
+        "args": {
+          "SERVICE": "chat"
+        }
+      },
+      "environment": {
+        "APP_NAME": "SRD-chat",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CHAT:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_chat",
+        "DB_USERNAME": "srd_chat",
+        "DB_PASSWORD": "${DB_PASSWORD_CHAT:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "BROADCAST_CONNECTION": "reverb",
+        "REVERB_APP_ID": "${REVERB_APP_ID:?Define REVERB_APP_ID}",
+        "REVERB_APP_KEY": "${REVERB_APP_KEY:?Define REVERB_APP_KEY}",
+        "REVERB_APP_SECRET": "${REVERB_APP_SECRET:?Ejecuta scripts/Initialize.ps1}",
+        "REVERB_HOST": "chat-reverb",
+        "REVERB_PORT": "8080",
+        "REVERB_SCHEME": "http",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "depends_on": {
+        "mysql": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "volumes": [
+        "scheduler_health_chat:/app/services/chat/storage/framework/scheduler-health:ro"
+      ],
+      "image": "srd-chat:production",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "chat-reverb": {
+      "image": "srd-chat:production",
+      "environment": {
+        "APP_NAME": "SRD-chat-reverb",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CHAT:?Ejecuta scripts/Initialize.ps1}",
+        "CACHE_STORE": "file",
+        "REVERB_APP_ID": "${REVERB_APP_ID:?Define REVERB_APP_ID}",
+        "REVERB_APP_KEY": "${REVERB_APP_KEY:?Define REVERB_APP_KEY}",
+        "REVERB_APP_SECRET": "${REVERB_APP_SECRET:?Ejecuta scripts/Initialize.ps1}",
+        "REVERB_HOST": "chat-reverb",
+        "REVERB_PORT": "8080",
+        "REVERB_SCHEME": "http",
+        "REVERB_ALLOWED_ORIGIN": "${SRD_DOMAIN:?Define SRD_DOMAIN}"
+      },
+      "command": [
+        "php",
+        "artisan",
+        "reverb:start",
+        "--host=0.0.0.0",
+        "--port=8080"
+      ],
+      "networks": [
+        "internal"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@fsockopen('127.0.0.1', 8080) === false ? 1 : 0);"
+        ],
+        "interval": "15s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "depends_on": {
+        "chat": {
+          "condition": "service_healthy"
+        }
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "chat-scheduler": {
+      "environment": {
+        "APP_NAME": "SRD-chat",
+        "APP_ENV": "production",
+        "APP_DEBUG": "false",
+        "APP_KEY": "${APP_KEY_CHAT:?Ejecuta scripts/Initialize.ps1}",
+        "APP_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "APP_LOCALE": "es",
+        "DB_CONNECTION": "mysql",
+        "DB_HOST": "mysql",
+        "DB_DATABASE": "srd_chat",
+        "DB_USERNAME": "srd_chat",
+        "DB_PASSWORD": "${DB_PASSWORD_CHAT:?Ejecuta scripts/Initialize.ps1}",
+        "SESSION_DRIVER": "file",
+        "SESSION_LIFETIME": "30",
+        "SESSION_COOKIE": "srd_session",
+        "SESSION_SAME_SITE": "strict",
+        "SESSION_SECURE_COOKIE": "true",
+        "CACHE_STORE": "file",
+        "HASH_DRIVER": "argon",
+        "MAIL_MAILER": "smtp",
+        "MAIL_HOST": "${SMTP_HOST:?Define SMTP_HOST}",
+        "MAIL_PORT": "${SMTP_PORT:-587}",
+        "MAIL_FROM_ADDRESS": "${SMTP_FROM_ADDRESS:?Define SMTP_FROM_ADDRESS}",
+        "MAIL_FROM_NAME": "SRD",
+        "INTERNAL_KEY": "${INTERNAL_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "CHALLENGE_KEY": "${CHALLENGE_KEY:?Ejecuta scripts/Initialize.ps1}",
+        "PUBLIC_URL": "https://${SRD_DOMAIN:?Define SRD_DOMAIN}",
+        "MAIL_SCHEME": "${SMTP_SCHEME:-smtp}",
+        "MAIL_USERNAME": "${SMTP_USERNAME:?Define SMTP_USERNAME}",
+        "MAIL_PASSWORD": "${SMTP_PASSWORD:?Define SMTP_PASSWORD}"
+      },
+      "networks": [
+        "internal"
+      ],
+      "command": [
+        "sh",
+        "-c",
+        "php artisan schedule:clear-cache && exec php artisan schedule:work"
+      ],
+      "depends_on": {
+        "chat": {
+          "condition": "service_healthy"
+        },
+        "audit": {
+          "condition": "service_healthy"
+        }
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "php",
+          "-r",
+          "$$p='storage/framework/scheduler-health/scheduler-heartbeat'; $$q='storage/framework/scheduler-health/outbox-heartbeat'; exit(is_file($$p) && is_file($$q) && time() - filemtime($$p) <= 180 && time() - filemtime($$q) <= 180 ? 0 : 1);"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 2,
+        "start_period": "180s"
+      },
+      "volumes": [
+        "scheduler_health_chat:/app/services/chat/storage/framework/scheduler-health"
+      ],
+      "image": "srd-chat:production",
+      "user": "www-data",
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "restart": "unless-stopped"
+    },
+    "caddy": {
+      "image": "caddy:2@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af",
+      "restart": "unless-stopped",
+      "ports": [
+        "80:80",
+        "443:443"
+      ],
+      "environment": {
+        "SRD_DOMAIN": "${SRD_DOMAIN:?Define SRD_DOMAIN}"
+      },
+      "volumes": [
+        "./docker/Caddyfile.production:/etc/caddy/Caddyfile:ro",
+        "caddy_data:/data",
+        "caddy_config:/config"
+      ],
+      "networks": [
+        "edge",
+        "internal"
+      ],
+      "depends_on": {
+        "web": {
+          "condition": "service_started"
+        }
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "turn": {
+      "image": "coturn/coturn:4.18.0-r0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e",
+      "restart": "unless-stopped",
+      "network_mode": "host",
+      "volumes": [
+        "./.turnserver.conf:/etc/coturn/turnserver.conf:ro"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "turnutils_stunclient",
+          "-p",
+          "3478",
+          "144.91.126.25"
+        ],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "20s"
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    }
+  },
+  "volumes": {
+    "mysql_data": {},
+    "gateway_sessions": {},
+    "files_objects": {},
+    "antivirus_signatures": {},
+    "scheduler_health_identity": {},
+    "scheduler_health_configuration": {},
+    "scheduler_health_records": {},
+    "scheduler_health_files": {},
+    "scheduler_health_calendar": {},
+    "scheduler_health_notifications": {},
+    "scheduler_health_treasury": {},
+    "scheduler_health_inventory": {},
+    "scheduler_health_chat": {},
+    "caddy_data": {},
+    "caddy_config": {}
+  },
+  "networks": {
+    "internal": {
+      "internal": true
+    },
+    "signature_updates": {},
+    "edge": {},
+    "smtp_egress": {}
+  }
+}
