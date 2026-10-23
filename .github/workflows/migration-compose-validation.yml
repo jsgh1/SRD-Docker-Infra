@@ -26,3 +26,57 @@ jobs:
           assert "antivirus" in cfg["services"]
           assert "mysql" in cfg["services"]
           print("PASS: Compose structure and Reverb build are valid")
+
+  reverb-fresh-image:
+    name: Clean Reverb image from split repos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+      - name: Checkout backend snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: migration/extract-2026-10-22-snapshot
+          path: _backend
+      - name: Assemble only Chat build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p services packages
+          cp -a _backend/services/chat services/chat
+          cp -a _backend/packages/php packages/php
+          test -f services/chat/composer.lock
+      - name: Build Chat image without local override
+        run: docker build --build-arg SERVICE=chat -f docker/php.Dockerfile -t srd-reverb-ci:latest .
+      - name: Start clean Reverb server and verify its socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker logs srd-reverb-ci --tail 35 || true; docker rm -f srd-reverb-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name srd-reverb-ci \
+            -e APP_ENV=testing \
+            -e APP_DEBUG=false \
+            -e APP_KEY=base64:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI= \
+            -e CACHE_STORE=file \
+            -e REVERB_APP_ID=srd-chat-local \
+            -e REVERB_APP_KEY=srd-chat-local \
+            -e REVERB_APP_SECRET=ci-test-only-reverb-secret \
+            -e REVERB_HOST=localhost \
+            -e REVERB_PORT=8080 \
+            -e REVERB_SCHEME=http \
+            -p 127.0.0.1:18080:8080 \
+            srd-reverb-ci:latest php artisan reverb:start --host=0.0.0.0 --port=8080
+          python3 - <<'PY'
+          import socket, time
+          for attempt in range(45):
+              try:
+                  with socket.create_connection(("127.0.0.1", 18080), timeout=2):
+                      print("PASS: clean Reverb image listens on TCP 8080")
+                      break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("Reverb did not start from the clean image")
+          PY
