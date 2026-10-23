@@ -1235,7 +1235,13 @@
       "volumes": ["scheduler_health_chat:/app/services/chat/storage/framework/scheduler-health:ro"]
     },
     "chat-reverb": {
-      "image": "srd-chat",
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/php.Dockerfile",
+        "args": {
+          "SERVICE": "chat"
+        }
+      },
       "environment": {
         "APP_NAME": "SRD-chat-reverb",
         "APP_ENV": "local",
