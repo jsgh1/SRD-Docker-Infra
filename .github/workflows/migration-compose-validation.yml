@@ -1,0 +1,28 @@
+name: Migration Compose validation
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compose-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose syntax without secrets
+        run: docker compose -f compose.yaml config --no-interpolate --quiet
+      - name: Validate Reverb reproducible build configuration
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          cfg = json.loads(Path("compose.yaml").read_text(encoding="utf-8"))
+          chat = cfg["services"]["chat"]
+          reverb = cfg["services"]["chat-reverb"]
+          assert "image" not in reverb, "Reverb must not depend on a machine-global image tag"
+          assert reverb["build"] == chat["build"], "Reverb must build the same Chat source"
+          assert reverb["command"][:2] == ["php", "artisan"]
+          assert "antivirus" in cfg["services"]
+          assert "mysql" in cfg["services"]
+          print("PASS: Compose structure and Reverb build are valid")
