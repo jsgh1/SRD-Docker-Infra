@@ -10,7 +10,7 @@ COPY services/${SERVICE}/composer.json services/${SERVICE}/composer.lock ./
 RUN composer install --no-dev --no-interaction --prefer-dist --no-scripts --no-autoloader
 COPY packages/php /app/packages/php
 COPY services/${SERVICE} /app/services/${SERVICE}
-RUN composer dump-autoload --no-dev --optimize && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/scheduler-health storage/logs && chown -R www-data:www-data storage bootstrap/cache
+RUN mkdir -p bootstrap/cache storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/scheduler-health storage/logs && composer dump-autoload --no-dev --optimize && chown -R www-data:www-data storage bootstrap/cache
 RUN if [ "$SERVICE" = gateway ]; then printf "memory_limit=256M\npost_max_size=32M\n" > /usr/local/etc/php/conf.d/srd-gateway.ini; fi
 RUN if [ "$SERVICE" = records ]; then printf "memory_limit=512M\n" > /usr/local/etc/php/conf.d/srd-records.ini; fi
 USER www-data
