@@ -76,7 +76,7 @@ jobs:
           test -f assembled/srd-provenance.json
           test -f assembled/services/identity/artisan
           test -f assembled/apps/web/package.json
-          test -f assembled/services/records/database/migrations/2026_09_07_000001_records.php
+          test -f assembled/services/records/database/migrations/2026_09_07_000002_records.php
           if grep -q $'\r' assembled/database/03_dcl/01_grants/initialize-services.sh; then echo 'CRLF in MySQL script'; exit 1; fi
           sh -n assembled/database/03_dcl/01_grants/initialize-services.sh
           docker compose -f assembled/compose.yaml config --no-interpolate --quiet
