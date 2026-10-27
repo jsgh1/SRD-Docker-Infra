@@ -7,7 +7,7 @@ on:
       backend_sha:
         description: Exact Backend revision
         required: true
-        default: b48c1e592a61f25c8703b83ce912958b5a631c38
+        default: 94ca9f84760e0b71f92d15a5cb2179fc51069630
       frontend_sha:
         description: Exact Frontend revision
         required: true
@@ -15,7 +15,7 @@ on:
       database_sha:
         description: Exact Database revision
         required: true
-        default: 213b8f8ed0eacaca196b7a108ac2e03a6b521a49
+        default: e7e5a704025bbe646cd9f842e39cd19295b958f8
       docs_sha:
         description: Exact Docs revision
         required: true
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: ${{ inputs.backend_sha || 'b48c1e592a61f25c8703b83ce912958b5a631c38' }}
+          ref: ${{ inputs.backend_sha || '94ca9f84760e0b71f92d15a5cb2179fc51069630' }}
           path: sources/SRD-Backend
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Database
-          ref: ${{ inputs.database_sha || '213b8f8ed0eacaca196b7a108ac2e03a6b521a49' }}
+          ref: ${{ inputs.database_sha || 'e7e5a704025bbe646cd9f842e39cd19295b958f8' }}
           path: sources/SRD-Database
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -97,16 +97,9 @@ jobs:
           path: assembled/srd-provenance.json
           if-no-files-found: ignore
   integration:
-    # A self-hosted runner must never execute arbitrary revisions supplied by a dispatch.
-    # Advance this reviewed allowlist only after the companion commits are published.
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/dev' &&
-      inputs.run_integration &&
-      inputs.backend_sha == 'b48c1e592a61f25c8703b83ce912958b5a631c38' &&
-      inputs.frontend_sha == '93194cfdae7c241297291f6322ae353f84e88a70' &&
-      inputs.database_sha == '213b8f8ed0eacaca196b7a108ac2e03a6b521a49' &&
-      inputs.docs_sha == '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
+    # Disabled until dev is protected and the self-hosted runner is reviewed.
+    # A separate reviewed PR must enable it with an exact SHA allowlist.
+    if: ${{ false }}
     runs-on: [self-hosted, Windows, X64, srd-integration-32gb]
     steps:
       - uses: actions/checkout@v4
