@@ -108,7 +108,21 @@ foreach ($Repo in $Repos) {
 
 Para una liberación reproducible en QA/producción se deben registrar **SHA específicos** de los cinco repositorios y no asumir que `dev` será inmutable.
 
-### 4.3 Reunir temporalmente el código
+### 4.3 Ensamblar un workspace nuevo con procedencia
+
+El ensamblador versionado exige rutas explícitas a las cinco raíces Git, comprueba `origin`, limpieza y SHA, y se detiene ante un destino poblado. `--check` valida y detecta colisiones sin escribir. La ejecución real copia solo fuentes necesarias y deja `srd-provenance.json` con SHA de repositorios y archivos; no crea `.env`, no inicia Docker y no aplica migraciones. Ejecuta con Node 22 o posterior, tanto en Windows como en Linux:
+
+```powershell
+$Base = 'E:\Nueva carpeta\SRD-MultiRepo' # Cambia esta ruta a tus cinco clones
+$Tool = Join-Path $Base 'SRD-Docker-Infra\tools\assemble-workspace.mjs'
+$Sources = @('--infra',"$Base\SRD-Docker-Infra",'--backend',"$Base\SRD-Backend",'--frontend',"$Base\SRD-Frontend",'--database',"$Base\SRD-Database",'--docs',"$Base\SRD-Docs")
+node $Tool @Sources --check
+node $Tool @Sources --dest "$Base\workspace-nuevo"
+```
+
+La opción `--allow-dirty` sirve únicamente para diagnosticar cambios locales; el manifiesto los marca y ese resultado no constituye una reconstrucción reproducible desde commits. Nunca apuntes `--dest` al workspace QA existente. En CI, `.github/workflows/d8-cross-repo.yml` ensambla revisiones compañeras fijadas y utiliza el commit candidato de Infra; sus valores SHA deben actualizarse al preparar una nueva versión. El job de integración es manual y optativo: requiere un runner Windows **dedicado** con etiqueta `srd-integration-32gb`, comprueba recursos/puertos/volúmenes y utiliza un proyecto Compose exclusivo; conserva volúmenes para diagnóstico. No se ha ejecutado este job desde D8 local.
+
+### 4.4 Copia manual de referencia
 
 Estas copias **no mueven ni borran archivos de los clones**. No uses `/MIR`, `Remove-Item` ni scripts masivos de limpieza. El destino es un directorio independiente.
 

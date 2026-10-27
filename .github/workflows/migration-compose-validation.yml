@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: migration/extract-2026-10-22-snapshot
+          ref: b48c1e592a61f25c8703b83ce912958b5a631c38
           path: _backend
       - name: Assemble only Chat build inputs
         shell: bash
