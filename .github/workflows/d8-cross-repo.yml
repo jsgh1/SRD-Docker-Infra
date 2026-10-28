@@ -15,7 +15,7 @@ on:
       database_sha:
         description: Exact Database revision
         required: true
-        default: e7e5a704025bbe646cd9f842e39cd19295b958f8
+        default: 4dc327f6c463c5dd37f81ca2628f177cf813058f
       docs_sha:
         description: Exact Docs revision
         required: true
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Database
-          ref: ${{ inputs.database_sha || 'e7e5a704025bbe646cd9f842e39cd19295b958f8' }}
+          ref: ${{ inputs.database_sha || '4dc327f6c463c5dd37f81ca2628f177cf813058f' }}
           path: sources/SRD-Database
           persist-credentials: false
       - uses: actions/checkout@v4
