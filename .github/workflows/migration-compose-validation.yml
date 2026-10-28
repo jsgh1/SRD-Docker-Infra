@@ -13,7 +13,24 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate Compose syntax without secrets
-        run: docker compose -f compose.yaml config --no-interpolate --quiet
+        run: |
+          docker compose -f compose.yaml config --no-interpolate --quiet
+          docker compose -f compose.production.yaml config --no-interpolate --quiet
+      - name: Validate download route and isolated release mount
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          compose = json.loads(Path('compose.production.yaml').read_text())
+          assert './releases:/srv/downloads:ro' in compose['services']['web']['volumes']
+          locations = Path('docker/nginx-locations.conf').read_text()
+          assert 'location ^~ /downloads/' in locations
+          assert 'try_files $uri =404;' in locations
+          PY
+          docker run --rm --network none \
+            -v "$PWD/docker/nginx-production.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$PWD/docker/nginx-locations.conf:/etc/nginx/srd-locations.conf:ro" \
+            nginx:stable-alpine nginx -t
       - name: Validate Reverb reproducible build configuration
         shell: python
         run: |
