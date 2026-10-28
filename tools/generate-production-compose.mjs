@@ -49,6 +49,7 @@ for (const [name, service] of Object.entries(production.services)) {
 production.services.web.build.dockerfile = 'docker/web-production.Dockerfile';
 delete production.services.web.ports;
 production.services.web.networks = ['internal'];
+production.services.web.volumes = ['./releases:/srv/downloads:ro'];
 production.services['chat-reverb'].image = 'srd-chat:production';
 production.services['chat-reverb'].depends_on = { chat: { condition: 'service_healthy' } };
 production.services['chat-reverb'].environment.REVERB_ALLOWED_ORIGIN = '${SRD_DOMAIN:?Define SRD_DOMAIN}';
