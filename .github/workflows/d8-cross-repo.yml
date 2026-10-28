@@ -1,0 +1,194 @@
+name: Cross-repository source validation
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      backend_sha:
+        description: Exact Backend revision
+        required: true
+        default: 94ca9f84760e0b71f92d15a5cb2179fc51069630
+      frontend_sha:
+        description: Exact Frontend revision
+        required: true
+        default: 93194cfdae7c241297291f6322ae353f84e88a70
+      database_sha:
+        description: Exact Database revision
+        required: true
+        default: 4dc327f6c463c5dd37f81ca2628f177cf813058f
+      docs_sha:
+        description: Exact Docs revision
+        required: true
+        default: 85456d13cc4f04ba1f4cea8d1178c45e30503a9c
+      run_integration:
+        description: Run isolated Docker and browser suite on a dedicated 32 GiB Windows runner
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  source-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: ${{ inputs.backend_sha || '94ca9f84760e0b71f92d15a5cb2179fc51069630' }}
+          path: sources/SRD-Backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: ${{ inputs.frontend_sha || '93194cfdae7c241297291f6322ae353f84e88a70' }}
+          path: sources/SRD-Frontend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: ${{ inputs.database_sha || '4dc327f6c463c5dd37f81ca2628f177cf813058f' }}
+          path: sources/SRD-Database
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: ${{ inputs.docs_sha || '85456d13cc4f04ba1f4cea8d1178c45e30503a9c' }}
+          path: sources/SRD-Docs
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - name: Assemble exact sources and preserve provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
+          test -f assembled/srd-provenance.json
+          test -f assembled/services/identity/artisan
+          test -f assembled/apps/web/package.json
+          test -f assembled/services/records/database/migrations/2026_09_07_000002_records.php
+          if grep -q $'\r' assembled/database/03_dcl/01_grants/initialize-services.sh; then echo 'CRLF in MySQL script'; exit 1; fi
+          sh -n assembled/database/03_dcl/01_grants/initialize-services.sh
+          docker compose -f assembled/compose.yaml config --no-interpolate --quiet
+      - name: Validate migration syntax and inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(find assembled/services -type f -path '*/database/migrations/*.php' | wc -l)"
+          test "$count" -eq 72
+          find assembled/services -type f -path '*/database/migrations/*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+      - name: Build web from assembled source
+        working-directory: assembled/apps/web
+        run: npm ci --no-audit --no-fund && npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: srd-source-provenance
+          path: assembled/srd-provenance.json
+          if-no-files-found: ignore
+  integration:
+    # Disabled until dev is protected and the self-hosted runner is reviewed.
+    # A separate reviewed PR must enable it with an exact SHA allowlist.
+    if: ${{ false }}
+    runs-on: [self-hosted, Windows, X64, srd-integration-32gb]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: ${{ inputs.backend_sha }}
+          path: sources/SRD-Backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: ${{ inputs.frontend_sha }}
+          path: sources/SRD-Frontend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: ${{ inputs.database_sha }}
+          path: sources/SRD-Database
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: ${{ inputs.docs_sha }}
+          path: sources/SRD-Docs
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, zip, gd, fileinfo
+          coverage: none
+      - name: Check dedicated runner isolation and assemble
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $os=Get-CimInstance Win32_OperatingSystem
+          if($os.TotalVisibleMemorySize/1MB -lt 30 -or $os.FreePhysicalMemory/1MB -lt 8){throw 'Dedicated runner needs 30 GiB installed and 8 GiB free'}
+          docker info *> $null
+          if($LASTEXITCODE){throw 'Docker unavailable'}
+          foreach($port in @(8080,8025)){
+            if(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue){throw "Port $port is occupied"}
+          }
+          $project='srd-d8-ci-${{ github.run_id }}'
+          if(docker ps -a --filter "label=com.docker.compose.project=$project" --format '{{.ID}}'){throw 'Project already exists'}
+          if(docker volume ls --filter "name=$project" --format '{{.Name}}'){throw 'Project volumes already exist'}
+          $sources=@('--infra','sources/SRD-Docker-Infra','--backend','sources/SRD-Backend','--frontend','sources/SRD-Frontend','--database','sources/SRD-Database','--docs','sources/SRD-Docs')
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs @sources --dest assembled
+          if($LASTEXITCODE){throw 'Assembly failed'}
+      - name: Build and exercise disposable SRD stack
+        shell: pwsh
+        working-directory: assembled
+        env:
+          COMPOSE_PROJECT_NAME: srd-d8-ci-${{ github.run_id }}
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./scripts/Initialize.ps1
+          if($LASTEXITCODE){throw 'Initialization failed'}
+          & ./scripts/Up.ps1
+          if($LASTEXITCODE){throw 'Startup or migration failed'}
+          & ./scripts/Test-MySqlIsolation.ps1
+          if($LASTEXITCODE){throw 'MySQL isolation failed'}
+          npm ci --prefix tools/browser-tests --no-audit --no-fund
+          if($LASTEXITCODE){throw 'Browser dependencies failed'}
+          $env:PLAYWRIGHT_BROWSERS_PATH=Join-Path (Get-Location) '.local/browsers'
+          node tools/browser-tests/node_modules/playwright/cli.js install chromium
+          if($LASTEXITCODE){throw 'Browser installation failed'}
+          & ./scripts/Test-Browser.ps1 -Compose -Spec access.spec.mjs -Php (Get-Command php).Source
+          if($LASTEXITCODE){throw 'Browser smoke failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: srd-integration-evidence
+          path: |
+            assembled/srd-provenance.json
+            assembled/.local/browser-results.json
+          if-no-files-found: ignore
+      - name: Stop only this dedicated CI project and retain its volumes for diagnosis
+        if: always()
+        shell: pwsh
+        env:
+          COMPOSE_PROJECT_NAME: srd-d8-ci-${{ github.run_id }}
+        run: |
+          if(Test-Path assembled/compose.yaml){
+            docker compose -f assembled/compose.yaml stop
+          }

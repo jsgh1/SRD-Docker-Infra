@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Validate Compose syntax without secrets
         run: docker compose -f compose.yaml config --no-interpolate --quiet
       - name: Validate Reverb reproducible build configuration
@@ -33,12 +35,15 @@ jobs:
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Checkout backend snapshot
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: migration/extract-2026-10-22-snapshot
+          ref: 94ca9f84760e0b71f92d15a5cb2179fc51069630
           path: _backend
+          persist-credentials: false
       - name: Assemble only Chat build inputs
         shell: bash
         run: |
