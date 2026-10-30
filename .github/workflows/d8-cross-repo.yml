@@ -7,11 +7,11 @@ on:
       backend_sha:
         description: Exact Backend revision
         required: true
-        default: 9a621362fdbf1388ed4c672a1a8900f723fabab1
+        default: e284b419cb91e8d4a02657df5448d31fc0fb9f2e
       frontend_sha:
         description: Exact Frontend revision
         required: true
-        default: 93194cfdae7c241297291f6322ae353f84e88a70
+        default: 126bfd39f592f77f2cf485f5cb69ae8cac4ce150
       database_sha:
         description: Exact Database revision
         required: true
@@ -38,13 +38,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: ${{ inputs.backend_sha || '9a621362fdbf1388ed4c672a1a8900f723fabab1' }}
+          ref: ${{ inputs.backend_sha || 'e284b419cb91e8d4a02657df5448d31fc0fb9f2e' }}
           path: sources/SRD-Backend
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: ${{ inputs.frontend_sha || '93194cfdae7c241297291f6322ae353f84e88a70' }}
+          ref: ${{ inputs.frontend_sha || '126bfd39f592f77f2cf485f5cb69ae8cac4ce150' }}
           path: sources/SRD-Frontend
           persist-credentials: false
       - uses: actions/checkout@v4
