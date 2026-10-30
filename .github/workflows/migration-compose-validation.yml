@@ -16,6 +16,40 @@ jobs:
         run: |
           docker compose -f compose.yaml config --no-interpolate --quiet
           docker compose -f compose.production.yaml config --no-interpolate --quiet
+      - name: Validate production security settings
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          compose = json.loads(Path('compose.production.yaml').read_text())
+          services = compose['services']
+          apps = {
+              name: service
+              for name, service in services.items()
+              if service.get('environment', {}).get('APP_ENV') == 'production'
+          }
+          assert apps, 'No production Laravel services were found'
+          for name, service in apps.items():
+              env = service['environment']
+              assert env.get('APP_DEBUG') == 'false', f'{name} must disable debug in production'
+          session_apps = {
+              name: service
+              for name, service in apps.items()
+              if 'SESSION_COOKIE' in service.get('environment', {})
+          }
+          assert session_apps, 'No production session services were found'
+          for name, service in session_apps.items():
+              assert service['environment'].get('SESSION_SECURE_COOKIE') == 'true', f'{name} must use secure session cookies'
+
+          for name in ('gateway', 'chat', 'chat-reverb'):
+              key = services[name]['environment'].get('REVERB_APP_KEY', '')
+              assert key == '${REVERB_APP_KEY:?Define REVERB_APP_KEY}', f'{name} must require its Reverb key from deployment configuration'
+
+          caddy = Path('docker/Caddyfile.production').read_text()
+          assert 'header Strict-Transport-Security "max-age=31536000"' in caddy, 'Production HTTPS must include HSTS'
+          print(f'PASS: {len(apps)} production apps disable debug; {len(session_apps)} session services use secure cookies; Reverb keys and HSTS are configured')
+          PY
       - name: Validate download route and isolated release mount
         run: |
           python3 - <<'PY'
@@ -58,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: 9a621362fdbf1388ed4c672a1a8900f723fabab1
+          ref: e284b419cb91e8d4a02657df5448d31fc0fb9f2e
           path: _backend
           persist-credentials: false
       - name: Assemble only Chat build inputs
