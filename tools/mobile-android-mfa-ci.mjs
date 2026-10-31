@@ -22,6 +22,7 @@ const sessionObservations = {
   viewerRegisterAction: "not-checked",
   afterBackground: "not-run",
   afterForceStop: "not-run",
+  afterServerRevocation: "not-run",
   afterUiLogout: "not-run",
   afterLogoutForceStop: "not-run",
 };
@@ -336,6 +337,22 @@ function assertSyntheticActiveSessions(fixtureUserId, expected) {
   }
 }
 
+function revokeSyntheticActiveSession(fixtureUserId) {
+  const project = process.env.SRD_COMPOSE_PROJECT;
+  assert(Boolean(project), "qa-compose-project-unavailable-for-session-revocation");
+  try {
+    execFileSync("docker", [
+      "compose", "--project-name", project,
+      "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
+      "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-revoke-mobile-session.php",
+      fixtureUserId,
+    ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
+  } catch {
+    throw new TestFailure("synthetic-session-revocation-failed");
+  }
+}
+
 function xmlEscape(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
@@ -449,35 +466,6 @@ async function run() {
   assertSyntheticActiveSessions(mobileUserId, 0);
   passCase();
 
-  beginCase("Android rejects an incorrect password without opening MFA or creating a session");
-  stage("reject-incorrect-password");
-  stage("enter-account-email");
-  await typeField("Correo electr\u00f3nico", email);
-  stage("enter-account-password");
-  const wrongPassword = `${password}x`;
-  await typeField("Contrase\u00f1a", wrongPassword);
-  stage("submit-incorrect-password");
-  await tapLabel("Ingresar");
-  await waitForNode("Debes iniciar sesi\u00f3n.");
-  assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
-  assertSyntheticActiveSessions(mobileUserId, 0);
-  await assertNoFreshMfaMessage(email, previousIds);
-  passCase();
-
-  beginCase("Android does not disclose whether an account exists");
-  stage("reject-nonexistent-account");
-  const missingEmail = "missing-account@srd-e2e.test";
-  await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
-  await replaceField("Contrase\u00f1a", wrongPassword.length, password);
-  await tapLabel("Ingresar");
-  await waitForNode("Debes iniciar sesi\u00f3n.");
-  assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
-  assertSyntheticActiveSessions(mobileUserId, 0);
-  await assertNoFreshMfaMessage(email, previousIds);
-  passCase();
-
-  await replaceField("Correo electr\u00f3nico", missingEmail.length, email);
-  await replaceField("Contrase\u00f1a", password.length, password);
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
@@ -523,6 +511,8 @@ async function run() {
   sessionObservations.viewerRegisterAction = findNode(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
   assert(sessionObservations.viewerCanConsultPeople === "true", "viewer-people-read-action-not-visible");
   assert(sessionObservations.viewerRegisterAction === "not-visible", "viewer-register-action-visible");
+  beginCase("Android completes real Mailpit MFA and shows viewer permissions in the native UI");
+  passCase();
 
   stage("background-and-resume-session-observation");
   adb(["shell", "input", "keyevent", "KEYCODE_HOME"]);
@@ -537,7 +527,39 @@ async function run() {
   launchQaApp();
   sessionObservations.afterForceStop = await waitForAuthUiState();
   console.log(`OBS Android session after force-stop: ${sessionObservations.afterForceStop}`);
+  assert(sessionObservations.afterForceStop === "authenticated-home", "android-session-not-retained-before-revocation");
 
+  beginCase("Android rejects a persisted session revoked directly by the server");
+  stage("revoke-active-synthetic-session-on-server");
+  revokeSyntheticActiveSession(mobileUserId);
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  stage("verify-server-revocation-after-process-restart");
+  adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  launchQaApp();
+  sessionObservations.afterServerRevocation = await waitForAuthUiState();
+  assert(["login-required", "organization-selection"].includes(sessionObservations.afterServerRevocation), "server-revoked-session-restored-on-android");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  beginCase("Android reauthenticates after server revocation with one new session");
+  const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
+  if (!findNode(uiNodes(), "\u2611")) {
+    await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
+    await waitForNode("\u2611");
+  }
+  await typeField("Correo electr\u00f3nico", email);
+  await typeField("Contrase\u00f1a", password);
+  await tapLabel("Ingresar");
+  await waitForNode("Revisa tu correo");
+  const reauthenticationCode = await waitForMfaCode(email, beforeReauthentication);
+  await typeField("C\u00f3digo de verificaci\u00f3n", reauthenticationCode);
+  await tapLabel("Verificar y entrar");
+  await waitForNode("Hola, Prueba Android");
+  assertSyntheticActiveSessions(mobileUserId, 1);
+  passCase();
+
+  beginCase("Android logout revokes the active session and remains anonymous after restart");
   if (sessionObservations.afterForceStop === "authenticated-home") {
     stage("logout-from-android-ui");
     await tapLabel("Cerrar sesión");
@@ -555,9 +577,33 @@ async function run() {
     sessionObservations.afterUiLogout = "not-run-session-not-retained";
     sessionObservations.afterLogoutForceStop = "not-run-session-not-retained";
   }
-
-  beginCase("Android completes real Mailpit MFA and shows viewer permissions in the native UI");
   passCase();
+
+  beginCase("Android rejects an incorrect password without opening MFA or creating a session");
+  stage("reject-incorrect-password-after-valid-session-lifecycle");
+  const beforeWrongPassword = new Set((await getMailpitMessages()).map((item) => item.ID));
+  await replaceField("Correo electr\u00f3nico", email.length, email);
+  await typeField("Contrase\u00f1a", `${password}x`);
+  await tapLabel("Ingresar");
+  await waitForNode("Debes iniciar sesi\u00f3n.");
+  assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  await assertNoFreshMfaMessage(email, beforeWrongPassword);
+  passCase();
+
+  beginCase("Android does not disclose whether an account exists");
+  stage("reject-nonexistent-account");
+  const beforeMissingAccount = new Set((await getMailpitMessages()).map((item) => item.ID));
+  const missingEmail = "missing-account@srd-e2e.test";
+  await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
+  await replaceField("Contrase\u00f1a", password.length + 1, password);
+  await tapLabel("Ingresar");
+  await waitForNode("Debes iniciar sesi\u00f3n.");
+  assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  await assertNoFreshMfaMessage(email, beforeMissingAccount);
+  passCase();
+
   result.passed = true;
   result.message = "";
   console.log("PASS Android QA authenticated through MySQL Identity, Mailpit MFA and the isolated Gateway");

@@ -10,6 +10,7 @@ on:
       - 'tools/fixture-credentials.mjs'
       - 'tools/create-fixtures.php'
       - 'tools/assert-fixture-session-state.php'
+      - 'tools/revoke-fixture-mobile-session.php'
       - 'tools/mobile-android-mfa-ci.mjs'
       - 'tools/assemble-workspace.mjs'
       - 'compose.yaml'
@@ -238,6 +239,7 @@ jobs:
           compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
           node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
           compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
+          compose cp assembled/tools/revoke-fixture-mobile-session.php identity:/tmp/srd-p14-revoke-mobile-session.php
 
       - name: Verify Android QA runner capacity and KVM
         shell: bash
