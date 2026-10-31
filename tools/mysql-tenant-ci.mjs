@@ -64,7 +64,12 @@ class HttpSession {
     } catch {
       // Tests assert stable status and safe payload properties without logging response bodies.
     }
-    return { status: response.status, data };
+    return {
+      status: response.status,
+      data,
+      retryAfter: response.headers.get("retry-after"),
+      rateLimitRemaining: response.headers.get("x-ratelimit-remaining"),
+    };
   }
 
   async csrf() {
@@ -118,7 +123,9 @@ async function startChallenge(role, organizationCode, termsVersionId) {
     terms_version_id: termsVersionId,
     accepted: true,
   }, await client.csrf());
-  equal(login.status, 200, `login-challenge-http-${login.status}`);
+  const retryAfter = /^\d{1,5}$/.test(login.retryAfter || "") ? login.retryAfter : "na";
+  const remaining = /^\d{1,5}$/.test(login.rateLimitRemaining || "") ? login.rateLimitRemaining : "na";
+  equal(login.status, 200, `login-challenge-${role}-http-${login.status}-retry-${retryAfter}-remaining-${remaining}`);
   const challengeId = login.data?.data?.challenge_id;
   assert(typeof challengeId === "string", "mfa-challenge-missing");
   return { client, challengeId, previousIds, user };
