@@ -15,6 +15,14 @@ let lastUiLabels = [];
 let lastUiDetails = [];
 let lastEditableStates = [];
 let freshMfaMailObserved = "not-checked";
+const sessionObservations = {
+  viewerCanConsultPeople: "not-checked",
+  viewerRegisterAction: "not-checked",
+  afterBackground: "not-run",
+  afterForceStop: "not-run",
+  afterUiLogout: "not-run",
+  afterLogoutForceStop: "not-run",
+};
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
 let memorySampleCount = 0;
@@ -115,6 +123,34 @@ function findNode(nodes, label, { editable = false } = {}) {
     const named = node.text === label || node["content-desc"] === label;
     return named && (!editable || /EditText$/.test(node.class || ""));
   });
+}
+
+function authUiState(nodes) {
+  if (findNode(nodes, "Hola, Prueba Android")) return "authenticated-home";
+  if (findNode(nodes, "Correo electrónico", { editable: true })) return "login-required";
+  if (findNode(nodes, "Código de junta", { editable: true })) return "organization-selection";
+  if (findNode(nodes, "Revisa tu correo")) return "mfa-challenge";
+  if (nodes.some((node) => (node.text || "").includes("No se pudo comprobar la sesión"))) return "session-restore-error";
+  return undefined;
+}
+
+async function waitForAuthUiState(timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    sampleAvailableMemory();
+    const nodes = uiNodes();
+    lastUiLabels = safeUiLabels(nodes);
+    lastUiDetails = safeUiDetails(nodes);
+    lastEditableStates = safeEditableStates(nodes);
+    const state = authUiState(nodes);
+    if (state) return state;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new TestFailure("android-auth-ui-state-not-observed");
+}
+
+function launchQaApp() {
+  adb(["shell", "monkey", "-p", "com.srd.mobile.qa", "-c", "android.intent.category.LAUNCHER", "1"]);
 }
 
 function tapNode(node) {
@@ -365,6 +401,43 @@ async function run() {
   await waitForNode("Hola, Prueba Android");
   stage("verify-people-section");
   await waitForNode("PERSONAS");
+  const viewerHomeNodes = uiNodes();
+  sessionObservations.viewerCanConsultPeople = String(Boolean(findNode(viewerHomeNodes, "Consultar personas")));
+  sessionObservations.viewerRegisterAction = findNode(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
+  assert(sessionObservations.viewerCanConsultPeople === "true", "viewer-people-read-action-not-visible");
+  assert(sessionObservations.viewerRegisterAction === "not-visible", "viewer-register-action-visible");
+
+  stage("background-and-resume-session-observation");
+  adb(["shell", "input", "keyevent", "KEYCODE_HOME"]);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  launchQaApp();
+  sessionObservations.afterBackground = await waitForAuthUiState();
+  console.log(`OBS Android session after background: ${sessionObservations.afterBackground}`);
+
+  stage("force-stop-and-relaunch-session-observation");
+  adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  launchQaApp();
+  sessionObservations.afterForceStop = await waitForAuthUiState();
+  console.log(`OBS Android session after force-stop: ${sessionObservations.afterForceStop}`);
+
+  if (sessionObservations.afterForceStop === "authenticated-home") {
+    stage("logout-from-android-ui");
+    await tapLabel("Cerrar sesión");
+    sessionObservations.afterUiLogout = await waitForAuthUiState();
+    assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "android-logout-did-not-return-to-anonymous-ui");
+
+    stage("verify-logout-after-process-restart");
+    adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    launchQaApp();
+    sessionObservations.afterLogoutForceStop = await waitForAuthUiState();
+    assert(sessionObservations.afterLogoutForceStop !== "authenticated-home", "android-session-survived-ui-logout-and-restart");
+  } else {
+    sessionObservations.afterUiLogout = "not-run-session-not-retained";
+    sessionObservations.afterLogoutForceStop = "not-run-session-not-retained";
+  }
+
   result.passed = true;
   result.message = "";
   console.log("PASS Android QA authenticated through MySQL Identity, Mailpit MFA and the isolated Gateway");
@@ -381,6 +454,7 @@ try {
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
   const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
-  fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${uiDiagnostics}`);
+  const sessionDiagnostics = Object.entries(sessionObservations).map(([key, value]) => `${key}: ${value}`).join("\n");
+  fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${sessionDiagnostics}\n${uiDiagnostics}`);
   writeJUnit();
 }
