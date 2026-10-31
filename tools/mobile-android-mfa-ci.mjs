@@ -363,6 +363,13 @@ async function getMailpitMessages() {
   return (await response.json()).messages || [];
 }
 
+async function assertNoFreshMfaMessage(email, previousIds) {
+  const messages = await getMailpitMessages();
+  const delivered = messages.some((item) => !previousIds.has(item.ID)
+    && item.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()));
+  assert(!delivered, "unexpected-mfa-email-after-rejected-login");
+}
+
 async function waitForMfaCode(email, previousIds) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
@@ -451,9 +458,10 @@ async function run() {
   await typeField("Contrase\u00f1a", wrongPassword);
   stage("submit-incorrect-password");
   await tapLabel("Ingresar");
-  await waitForNode("Correo o contrase\u00f1a incorrectos. Revisa los datos e int\u00e9ntalo de nuevo.");
+  await waitForNode("Debes iniciar sesi\u00f3n.");
   assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
   assertSyntheticActiveSessions(mobileUserId, 0);
+  await assertNoFreshMfaMessage(email, previousIds);
   passCase();
 
   beginCase("Android does not disclose whether an account exists");
@@ -462,9 +470,10 @@ async function run() {
   await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
   await replaceField("Contrase\u00f1a", wrongPassword.length, password);
   await tapLabel("Ingresar");
-  await waitForNode("Correo o contrase\u00f1a incorrectos. Revisa los datos e int\u00e9ntalo de nuevo.");
+  await waitForNode("Debes iniciar sesi\u00f3n.");
   assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
   assertSyntheticActiveSessions(mobileUserId, 0);
+  await assertNoFreshMfaMessage(email, previousIds);
   passCase();
 
   await replaceField("Correo electr\u00f3nico", missingEmail.length, email);
