@@ -24,6 +24,12 @@ Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
   if($role==='viewer' && in_array(getenv('SRD_BROWSER_SPEC'),['chat-switch-organization.spec.mjs','platform-accounts.spec.mjs','profile-photo.spec.mjs'],true))
    Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$user['id'],'organization_id'=>$fixture['orgB'],'role'=>'viewer']);
  }
+ if($service==='identity' && getenv('SRD_P11_TENANT_RECORDS')==='1'){
+  $admin=$fixture['users']['admin']??null;
+  if(!$admin || empty($fixture['orgB']))throw new RuntimeException('P11 synthetic tenant fixture is incomplete.');
+  Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),
+   'user_id'=>$admin['id'],'organization_id'=>$fixture['orgB'],'role'=>'admin']);
+ }
  if($service==='identity' && getenv('SRD_BROWSER_SPEC')==='chat-conversations-pagination.spec.mjs'){
   $password=Illuminate\Support\Facades\Hash::make($fixture['password']);
   foreach($fixture['extra_chat_users']??[] as $user){
