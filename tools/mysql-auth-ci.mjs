@@ -3,7 +3,7 @@ import path from "node:path";
 
 const fixturePath = path.resolve(process.argv[2] || "assembled/.local/e2e-fixture.json");
 const resultsPath = path.resolve(process.env.SRD_JUNIT_PATH || "test-results/p10-mysql-auth.junit.xml");
-const gateway = new URL(process.env.SRD_GATEWAY_URL || "http://127.0.0.1:18080");
+const gateway = new URL(process.env.SRD_GATEWAY_URL || "http://127.0.0.1:8080");
 const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
 
 for (const target of [gateway, mailpit]) {
@@ -21,6 +21,15 @@ function assert(condition, label) {
 
 function equal(actual, expected, label) {
   assert(actual === expected, label);
+}
+
+function safeErrorLabel(error) {
+  if (error instanceof Error && /^[a-z0-9-]+$/.test(error.message)) return error.message;
+  const code = error?.cause?.code;
+  if (typeof code === "string" && /^[A-Z0-9_]+$/.test(code)) return `network-${code.toLowerCase()}`;
+  if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) return "fetch-failed";
+  if (error instanceof Error && error.name === "TypeError") return "unexpected-typeerror";
+  return "unexpected-error";
 }
 
 function xml(value) {
@@ -44,7 +53,7 @@ class HttpSession {
       redirect: "error",
       signal: AbortSignal.timeout(15000),
     });
-    for (const cookie of response.headers.getSetCookie()) {
+    for (const cookie of response.headers.getSetCookie?.() ?? []) {
       const firstPart = cookie.split(";", 1)[0];
       const separator = firstPart.indexOf("=");
       if (separator > 0) this.#cookies.set(firstPart.slice(0, separator), firstPart.slice(separator + 1));
@@ -115,9 +124,7 @@ async function runCase(name, operation) {
     cases.push({ name, passed: true, message: "" });
     console.log(`PASS ${name}`);
   } catch (error) {
-    const message = error instanceof Error && /^[a-z0-9-]+$/.test(error.message)
-      ? error.message
-      : "unexpected-error";
+    const message = safeErrorLabel(error);
     cases.push({ name, passed: false, message });
     console.error(`FAIL ${name}`);
   }
@@ -134,9 +141,10 @@ async function writeJUnit() {
 
 try {
   await runCase("gateway exposes two migrated synthetic organizations", async () => {
-    const health = await fetch(new URL("/up", gateway), { signal: AbortSignal.timeout(10000) });
-    equal(health.status, 200, "gateway-health");
     const client = new HttpSession();
+    const health = await client.request("GET", "/api/v1/csrf");
+    equal(health.status, 200, "gateway-http-health");
+    assert(typeof health.data?.data?.token === "string", "gateway-csrf-unavailable");
     for (const [letter, code] of [["A", fixture.codeA || "srd-e2e-a"], ["B", fixture.codeB || "srd-e2e-b"]]) {
       const response = await client.request("GET", `/api/v1/organizations/${code}`);
       equal(response.status, 200, `organization-${letter}-status`);

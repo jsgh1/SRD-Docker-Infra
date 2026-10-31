@@ -105,7 +105,7 @@ jobs:
             echo 'The unique Compose project name already has volumes.' >&2
             exit 1
           fi
-          for port in 18080 8025; do
+          for port in 8080 8025; do
             if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
               echo "Required QA port $port is already in use; nothing was stopped." >&2
               exit 1
@@ -136,19 +136,12 @@ jobs:
             node tools/initialize.mjs
             node tools/fixture-credentials.mjs
           )
-          cat > "$RUNNER_TEMP/p10-auth-compose.yaml" <<'YAML'
-          services:
-            gateway:
-              ports:
-                - "127.0.0.1:18080:8000"
-          YAML
-
       - name: Validate the selected Compose project before creating resources
         shell: bash
         run: |
           set -euo pipefail
           docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-            -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" config --quiet
+            -f assembled/compose.yaml config --quiet
 
       - name: Build only Gateway, Identity and Configuration sequentially
         shell: bash
@@ -156,22 +149,23 @@ jobs:
           set -euo pipefail
           compose() {
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-              -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" "$@"
+              -f assembled/compose.yaml "$@"
           }
           compose pull mysql mailpit
           compose build identity
           compose build configuration
           compose build gateway
+          compose build web
 
       - name: Start isolated MySQL and Mailpit, then initialize service databases
         shell: bash
         run: |
           set -euo pipefail
           docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-            -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" \
+            -f assembled/compose.yaml \
             up -d --wait --wait-timeout 240 mysql mailpit
           docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-            -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" \
+            -f assembled/compose.yaml \
             exec -T mysql bash /docker-entrypoint-initdb.d/01-services.sh
           for attempt in $(seq 1 40); do
             if curl --fail --silent http://127.0.0.1:8025/api/v1/messages >/dev/null; then exit 0; fi
@@ -186,11 +180,14 @@ jobs:
           set -euo pipefail
           compose() {
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-              -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" "$@"
+              -f assembled/compose.yaml "$@"
           }
           compose up -d --wait --wait-timeout 180 configuration
           compose up -d --wait --wait-timeout 180 identity
           compose up -d --wait --wait-timeout 180 gateway
+          compose up -d --wait --wait-timeout 180 web
+          compose port web 80
+          curl --fail --silent --show-error http://127.0.0.1:8080/ >/dev/null
           compose ps
 
       - name: Apply real MySQL migrations for the selected services
@@ -199,7 +196,7 @@ jobs:
           set -euo pipefail
           compose() {
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-              -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" "$@"
+              -f assembled/compose.yaml "$@"
           }
           for service in configuration identity gateway; do
             compose exec -T "$service" php artisan migrate --force
@@ -209,13 +206,13 @@ jobs:
         shell: bash
         env:
           SRD_JUNIT_PATH: test-results/p10-mysql-auth.junit.xml
-          SRD_GATEWAY_URL: http://127.0.0.1:18080
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
           SRD_MAILPIT_URL: http://127.0.0.1:8025
         run: |
           set -euo pipefail
           compose() {
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-              -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" "$@"
+              -f assembled/compose.yaml "$@"
           }
           fixture_target=/tmp/srd-p10-fixture.json
           compose cp assembled/tools/create-fixtures.php configuration:/tmp/srd-p10-fixtures.php
@@ -250,7 +247,7 @@ jobs:
           set +e
           if [[ -f assembled/compose.yaml && -f assembled/.env ]]; then
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
-              -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" \
+              -f assembled/compose.yaml \
               down --remove-orphans
           fi
           # The runner is disposable; project-labelled volumes are not explicitly deleted.
