@@ -12,6 +12,8 @@ const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "te
 const result = { name: "Android QA app completes real Gateway login and Mailpit MFA", passed: false, message: "not-run" };
 let currentStage = "startup";
 let lastUiLabels = [];
+let lastUiDetails = [];
+let freshMfaMailObserved = "not-checked";
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
 let memorySampleCount = 0;
@@ -77,6 +79,23 @@ function safeUiLabels(nodes) {
     .slice(0, 40);
 }
 
+function safeUiDetails(nodes) {
+  return [...new Set(nodes
+    .filter((node) => !/EditText$/.test(node.class || ""))
+    .map((node) => {
+      const label = (node.text || node["content-desc"] || "").trim();
+      if (!label) return "";
+      const safeLabel = label
+        .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
+        .replace(/\b\d{6}\b/g, "[CODE]")
+        .slice(0, 80);
+      const type = (node.class || "node").split(".").at(-1);
+      return `${type} ${node.bounds || "[no-bounds]"} ${safeLabel}`;
+    })
+    .filter(Boolean))]
+    .slice(0, 50);
+}
+
 function findNode(nodes, label, { editable = false } = {}) {
   return nodes.find((node) => {
     const named = node.text === label || node["content-desc"] === label;
@@ -99,6 +118,7 @@ async function waitForNode(label, options = {}) {
     sampleAvailableMemory();
     const nodes = uiNodes();
     lastUiLabels = safeUiLabels(nodes);
+    lastUiDetails = safeUiDetails(nodes);
     const node = findNode(nodes, label, options);
     if (node) return node;
     attempts += 1;
@@ -222,7 +242,18 @@ async function run() {
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
-  await waitForNode("Revisa tu correo");
+  try {
+    await waitForNode("Revisa tu correo");
+  } catch (error) {
+    try {
+      const currentMessages = await getMailpitMessages();
+      freshMfaMailObserved = String(currentMessages.some((item) => !previousIds.has(item.ID)
+        && item.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase())));
+    } catch {
+      freshMfaMailObserved = "mailpit-unavailable";
+    }
+    throw error;
+  }
   console.log("PASS Android QA reached the real MFA challenge");
 
   stage("wait-for-mailpit-mfa");
@@ -250,7 +281,7 @@ try {
   if (memoryInterval) clearInterval(memoryInterval);
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\n`;
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\n`;
   fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${uiDiagnostics}`);
   writeJUnit();
 }
