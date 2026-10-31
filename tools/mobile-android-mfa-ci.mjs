@@ -466,6 +466,8 @@ async function run() {
   assertSyntheticActiveSessions(mobileUserId, 0);
   passCase();
 
+  await typeField("Correo electr\u00f3nico", email);
+  await typeField("Contrase\u00f1a", password);
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
