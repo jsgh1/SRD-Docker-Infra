@@ -399,6 +399,16 @@ async function getMailpitMessages() {
   return (await response.json()).messages || [];
 }
 
+async function observeFreshMfaMessage(email, previousIds) {
+  try {
+    const messages = await getMailpitMessages();
+    return String(messages.some((item) => !previousIds.has(item.ID)
+      && item.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase())));
+  } catch {
+    return "mailpit-unavailable";
+  }
+}
+
 async function assertNoFreshMfaMessage(email, previousIds) {
   const messages = await getMailpitMessages();
   const delivered = messages.some((item) => !previousIds.has(item.ID)
@@ -490,13 +500,7 @@ async function run() {
   try {
     await waitForNode("Revisa tu correo");
   } catch (error) {
-    try {
-      const currentMessages = await getMailpitMessages();
-      freshMfaMailObserved = String(currentMessages.some((item) => !previousIds.has(item.ID)
-        && item.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase())));
-    } catch {
-      freshMfaMailObserved = "mailpit-unavailable";
-    }
+    freshMfaMailObserved = await observeFreshMfaMessage(email, previousIds);
     throw error;
   }
   console.log("PASS Android QA reached the real MFA challenge");
@@ -604,7 +608,12 @@ async function run() {
   await replaceField("Contrase\u00f1a", password.length, password);
   await tapLabel("Ingresar");
   stage("wait-for-reauthentication-mfa-challenge");
-  await waitForNode("Revisa tu correo");
+  try {
+    await waitForNode("Revisa tu correo");
+  } catch (error) {
+    freshMfaMailObserved = await observeFreshMfaMessage(email, beforeReauthentication);
+    throw error;
+  }
   const reauthenticationCode = await waitForMfaCode(email, beforeReauthentication);
   await typeField("C\u00f3digo de verificaci\u00f3n", reauthenticationCode);
   await tapLabel("Verificar y entrar");
