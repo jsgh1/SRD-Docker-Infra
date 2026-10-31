@@ -6,6 +6,10 @@ const apkPath = path.resolve(process.env.SRD_ANDROID_APK || "");
 const fixturePath = path.resolve(process.env.SRD_FIXTURE_PATH || "");
 const gateway = new URL(process.env.SRD_GATEWAY_URL || "http://127.0.0.1:8080");
 const androidOrigin = process.env.SRD_ANDROID_GATEWAY_ORIGIN || "";
+const androidPackage = process.env.SRD_ANDROID_PACKAGE || "com.srd.mobile.qa";
+const rejectedLoginMessage = process.env.SRD_ANDROID_REJECTED_LOGIN_MESSAGE || "Debes iniciar sesi\u00f3n.";
+const isExpoClient = androidPackage === "com.srd.mobileexpo";
+const junitSuiteName = isExpoClient ? "SRD Expo Android QA E2E" : "SRD Android QA E2E";
 const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
 const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-results/android-qa-e2e.junit.xml");
 const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/android-runner-resources.txt");
@@ -128,6 +132,10 @@ function findNode(nodes, label, { editable = false } = {}) {
   });
 }
 
+function findNodeContaining(nodes, label) {
+  return nodes.find((node) => (node.text || node["content-desc"] || "").includes(label));
+}
+
 function authUiState(nodes) {
   if (findNode(nodes, "Hola, Prueba Android")) return "authenticated-home";
   if (findNode(nodes, "Correo electrónico", { editable: true })) return "login-required";
@@ -153,7 +161,7 @@ async function waitForAuthUiState(timeoutMs = 30000) {
 }
 
 function launchQaApp() {
-  adb(["shell", "monkey", "-p", "com.srd.mobile.qa", "-c", "android.intent.category.LAUNCHER", "1"]);
+  adb(["shell", "monkey", "-p", androidPackage, "-c", "android.intent.category.LAUNCHER", "1"]);
 }
 
 function tapNode(node) {
@@ -257,7 +265,7 @@ async function waitForNode(label, options = {}) {
     const nodes = uiNodes();
     lastUiLabels = safeUiLabels(nodes);
     lastUiDetails = safeUiDetails(nodes);
-    const node = findNode(nodes, label, options);
+    const node = options.contains ? findNodeContaining(nodes, label) : findNode(nodes, label, options);
     if (node) return node;
     attempts += 1;
     if (options.scroll && attempts % 4 === 0) {
@@ -293,6 +301,17 @@ async function replaceField(label, previousLength, value) {
   if (value) adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
   await new Promise((resolve) => setTimeout(resolve, 300));
+}
+
+async function verifyEmptyLoginForm(fixtureUserId, previousEmailLength, previousPasswordLength) {
+  stage("reject-empty-login-fields");
+  await replaceField("Correo electr\u00f3nico", previousEmailLength, "");
+  await replaceField("Contrase\u00f1a", previousPasswordLength, "");
+  await tapLabel("Ingresar");
+  await waitForNode("Ingresa correo y contrase\u00f1a.");
+  assert(authUiState(uiNodes()) === "login-required", "empty-login-left-login-screen");
+  assertSyntheticActiveSessions(fixtureUserId, 0);
+  passCase();
 }
 
 async function waitForEnabledLabel(label, timeoutMs = 30000) {
@@ -370,7 +389,7 @@ function writeJUnit() {
     return `  <testcase classname="srd.android" name="${xmlEscape(testCase.name)}">${failure}</testcase>`;
   }).join("\n");
   fs.writeFileSync(junitPath,
-    `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="SRD Android QA E2E" tests="${cases.length}" failures="${failures}" errors="0" skipped="0">\n${testXml}\n</testsuite>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="${junitSuiteName}" tests="${cases.length}" failures="${failures}" errors="0" skipped="0">\n${testXml}\n</testsuite>\n`,
     { encoding: "utf8" });
 }
 
@@ -442,11 +461,16 @@ async function run() {
   selectedSerial = deviceLines[0].split(/\s+/)[0];
   stage("install-and-launch-apk");
   adb(["install", "-t", apkPath]);
-  adb(["shell", "monkey", "-p", "com.srd.mobile.qa", "-c", "android.intent.category.LAUNCHER", "1"]);
+  launchQaApp();
   assertSyntheticActiveSessions(mobileUserId, 0);
   stage("locate-join-code-field");
   await waitForNode("C\u00f3digo de junta", { editable: true });
   console.log("PASS Android QA APK installed and launched");
+
+  if (isExpoClient && findNode(uiNodes(), "Direcci\u00f3n del servidor", {editable: true})) {
+    stage("enter-qa-gateway-origin");
+    await typeField("Direcci\u00f3n del servidor", androidOrigin);
+  }
 
   stage("enter-join-code");
   await typeField("C\u00f3digo de junta", organizationCode);
@@ -457,14 +481,6 @@ async function run() {
   stage("accept-organization-terms");
   await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
   await waitForNode("\u2611");
-
-  beginCase("Android form validation rejects empty credentials");
-  stage("reject-empty-login-fields");
-  await tapLabel("Ingresar");
-  await waitForNode("Ingresa correo y contrase\u00f1a.");
-  assert(authUiState(uiNodes()) === "login-required", "empty-login-left-login-screen");
-  assertSyntheticActiveSessions(mobileUserId, 0);
-  passCase();
 
   await typeField("Correo electr\u00f3nico", email);
   await typeField("Contrase\u00f1a", password);
@@ -487,6 +503,37 @@ async function run() {
 
   stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);
+  if (isExpoClient) {
+    beginCase("Expo SDK 58 completes real Gateway and Mailpit MFA and renders viewer permissions");
+    stage("submit-valid-expo-mfa-code");
+    await typeField("C\u00f3digo de verificaci\u00f3n", code);
+    await tapLabel("Verificar y entrar");
+    await waitForNode("Hola, Prueba Android");
+    assertSyntheticActiveSessions(mobileUserId, 1);
+    const viewerHomeNodes = uiNodes();
+    sessionObservations.viewerCanConsultPeople = String(Boolean(findNodeContaining(viewerHomeNodes, "Personas")));
+    sessionObservations.viewerRegisterAction = findNodeContaining(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
+    assert(sessionObservations.viewerCanConsultPeople === "true", "expo-viewer-people-action-not-visible");
+    assert(sessionObservations.viewerRegisterAction === "not-visible", "expo-viewer-register-action-visible");
+    passCase();
+
+    beginCase("Expo SDK 58 logout revokes the synthetic session");
+    stage("logout-from-expo-ui");
+    await tapLabel("Cerrar sesi\u00f3n");
+    sessionObservations.afterUiLogout = await waitForAuthUiState();
+    assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "expo-logout-did-not-return-to-anonymous-ui");
+    assertSyntheticActiveSessions(mobileUserId, 0);
+    passCase();
+
+    beginCase("Expo SDK 58 keeps empty login credentials on the login form");
+    await verifyEmptyLoginForm(mobileUserId, email.length, password.length + 1);
+
+    result.passed = true;
+    result.message = "";
+    console.log("PASS Expo SDK 58 authenticated through isolated Gateway and real Mailpit MFA; viewer scope and logout verified");
+    return;
+  }
+
   beginCase("Android rejects an incorrect MFA code and leaves the fixture session anonymous");
   stage("reject-incorrect-mfa-code");
   const wrongCode = `${code[0] === "9" ? "0" : String(Number(code[0]) + 1)}${code.slice(1)}`;
@@ -507,10 +554,12 @@ async function run() {
   await waitForNode("Hola, Prueba Android");
   assertSyntheticActiveSessions(mobileUserId, 1);
   stage("verify-people-section");
-  await waitForNode("PERSONAS");
   const viewerHomeNodes = uiNodes();
-  sessionObservations.viewerCanConsultPeople = String(Boolean(findNode(viewerHomeNodes, "Consultar personas")));
-  sessionObservations.viewerRegisterAction = findNode(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
+  const peopleAction = isExpoClient
+    ? findNodeContaining(viewerHomeNodes, "Personas")
+    : findNode(viewerHomeNodes, "Consultar personas");
+  sessionObservations.viewerCanConsultPeople = String(Boolean(peopleAction));
+  sessionObservations.viewerRegisterAction = findNodeContaining(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
   assert(sessionObservations.viewerCanConsultPeople === "true", "viewer-people-read-action-not-visible");
   assert(sessionObservations.viewerRegisterAction === "not-visible", "viewer-register-action-visible");
   beginCase("Android completes real Mailpit MFA and shows viewer permissions in the native UI");
@@ -524,7 +573,7 @@ async function run() {
   console.log(`OBS Android session after background: ${sessionObservations.afterBackground}`);
 
   stage("force-stop-and-relaunch-session-observation");
-  adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+  adb(["shell", "am", "force-stop", androidPackage]);
   await new Promise((resolve) => setTimeout(resolve, 800));
   launchQaApp();
   sessionObservations.afterForceStop = await waitForAuthUiState();
@@ -536,7 +585,7 @@ async function run() {
   revokeSyntheticActiveSession(mobileUserId);
   assertSyntheticActiveSessions(mobileUserId, 0);
   stage("verify-server-revocation-after-process-restart");
-  adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+  adb(["shell", "am", "force-stop", androidPackage]);
   await new Promise((resolve) => setTimeout(resolve, 800));
   launchQaApp();
   sessionObservations.afterServerRevocation = await waitForAuthUiState();
@@ -572,7 +621,7 @@ async function run() {
     assertSyntheticActiveSessions(mobileUserId, 0);
 
     stage("verify-logout-after-process-restart");
-    adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
+    adb(["shell", "am", "force-stop", androidPackage]);
     await new Promise((resolve) => setTimeout(resolve, 800));
     launchQaApp();
     sessionObservations.afterLogoutForceStop = await waitForAuthUiState();
@@ -589,7 +638,7 @@ async function run() {
   await replaceField("Correo electr\u00f3nico", email.length, email);
   await typeField("Contrase\u00f1a", `${password}x`);
   await tapLabel("Ingresar");
-  await waitForNode("Debes iniciar sesi\u00f3n.");
+  await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
   assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
   assertSyntheticActiveSessions(mobileUserId, 0);
   await assertNoFreshMfaMessage(email, beforeWrongPassword);
@@ -602,11 +651,14 @@ async function run() {
   await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
   await replaceField("Contrase\u00f1a", password.length + 1, password);
   await tapLabel("Ingresar");
-  await waitForNode("Debes iniciar sesi\u00f3n.");
+  await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
   assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
   assertSyntheticActiveSessions(mobileUserId, 0);
   await assertNoFreshMfaMessage(email, beforeMissingAccount);
   passCase();
+
+  beginCase("Android form validation rejects empty credentials");
+  await verifyEmptyLoginForm(mobileUserId, missingEmail.length, password.length);
 
   result.passed = true;
   result.message = "";
