@@ -30,6 +30,11 @@ Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
   Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),
    'user_id'=>$admin['id'],'organization_id'=>$fixture['orgB'],'role'=>'admin']);
  }
+ if($service==='identity' && !empty($fixture['mobile_user']['id']) && !empty($fixture['mobile_user']['email'])){
+  $mobile=$fixture['mobile_user'];
+  Illuminate\Support\Facades\DB::table('users')->insertOrIgnore(['id'=>$mobile['id'],'email'=>$mobile['email'],'name'=>'Prueba Android','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'created_at'=>now(),'updated_at'=>now()]);
+  Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA'],'role'=>'viewer']);
+ }
  if($service==='identity' && getenv('SRD_BROWSER_SPEC')==='chat-conversations-pagination.spec.mjs'){
   $password=Illuminate\Support\Facades\Hash::make($fixture['password']);
   foreach($fixture['extra_chat_users']??[] as $user){
