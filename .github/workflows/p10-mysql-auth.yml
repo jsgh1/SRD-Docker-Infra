@@ -1,0 +1,253 @@
+name: P10 MySQL authentication and tenant integration
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/p10-mysql-auth.yml'
+      - 'tools/mysql-auth-ci.mjs'
+      - 'tools/fixture-credentials.mjs'
+      - 'tools/create-fixtures.php'
+      - 'tools/assemble-workspace.mjs'
+      - 'compose.yaml'
+      - 'docker/php.Dockerfile'
+      - 'database/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p10-mysql-auth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mysql-auth-integration:
+    name: Real MySQL, SMTP MFA, roles and tenant boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SRD_COMPOSE_PROJECT: srd-p10-auth-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out Docker Infra under review
+        uses: actions/checkout@v4
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+
+      - name: Check out immutable integration sources
+        uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: 4937742c3d7cc52c7d0574f14bcfc28d7d332e98
+          path: sources/SRD-Backend
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: de4d8561dffa442f4e893ef894f2d986358632f2
+          path: sources/SRD-Frontend
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: sources/SRD-Database
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: 85456d13cc4f04ba1f4cea8d1178c45e30503a9c
+          path: sources/SRD-Docs
+          persist-credentials: false
+
+      - name: Check public runner resources and isolate this run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+          mem_total_kb="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+          disk_available_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          cpu_count="$(nproc)"
+          mem_available_gib="$((mem_available_kb / 1024 / 1024))"
+          mem_total_gib="$((mem_total_kb / 1024 / 1024))"
+          disk_available_gib="$((disk_available_kb / 1024 / 1024))"
+          {
+            echo "Runner: ubuntu-latest"
+            echo "CPUCount: ${cpu_count}"
+            echo "MemTotalGiB: ${mem_total_gib} (integer GiB)"
+            echo "MemAvailableGiB: ${mem_available_gib} (integer GiB)"
+            echo "TempDiskAvailableGiB: ${disk_available_gib} (integer GiB)"
+            echo "Docker: $(docker version --format '{{.Server.Version}}')"
+          } | tee runner-capacity.txt
+          if (( cpu_count < 2 )); then
+            echo 'Runner exposes fewer than 2 CPUs; refusing integration startup.' >&2
+            exit 1
+          fi
+          if (( mem_available_kb < 5 * 1024 * 1024 )); then
+            echo 'Runner has less than 5 GiB available memory; refusing integration startup.' >&2
+            exit 1
+          fi
+          if (( disk_available_kb < 8 * 1024 * 1024 )); then
+            echo 'Runner has less than 8 GiB available disk; refusing integration build.' >&2
+            exit 1
+          fi
+          docker info >/dev/null
+          if docker ps -aq --filter "label=com.docker.compose.project=$SRD_COMPOSE_PROJECT" | grep -q .; then
+            echo 'The unique Compose project name already has containers.' >&2
+            exit 1
+          fi
+          if docker volume ls -q --filter "label=com.docker.compose.project=$SRD_COMPOSE_PROJECT" | grep -q .; then
+            echo 'The unique Compose project name already has volumes.' >&2
+            exit 1
+          fi
+          for port in 8080 8025; do
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+              echo "Required QA port $port is already in use; nothing was stopped." >&2
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify immutable SHAs and assemble the five-source workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sources/SRD-Backend rev-parse HEAD)" = '4937742c3d7cc52c7d0574f14bcfc28d7d332e98'
+          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'de4d8561dffa442f4e893ef894f2d986358632f2'
+          test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33'
+          test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
+          node --check sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs
+          test -f assembled/compose.yaml
+          test -f assembled/tools/create-fixtures.php
+          test -f assembled/tools/fixture-credentials.mjs
+          (
+            cd assembled
+            node tools/initialize.mjs
+            node tools/fixture-credentials.mjs
+          )
+      - name: Validate the selected Compose project before creating resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml config --quiet
+
+      - name: Build only Gateway, Identity and Configuration sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          compose pull mysql mailpit
+          compose build identity
+          compose build configuration
+          compose build gateway
+          compose build web
+
+      - name: Start isolated MySQL and Mailpit, then initialize service databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml \
+            up -d --wait --wait-timeout 240 mysql mailpit
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml \
+            exec -T mysql bash /docker-entrypoint-initdb.d/01-services.sh
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8025/api/v1/messages >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo 'Mailpit API did not become available.' >&2
+          exit 1
+
+      - name: Start only Configuration, Identity and Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          compose up -d --wait --wait-timeout 180 configuration
+          compose up -d --wait --wait-timeout 180 identity
+          compose up -d --wait --wait-timeout 180 gateway
+          compose up -d --wait --wait-timeout 180 web
+          compose port web 80
+          curl --fail --silent --show-error http://127.0.0.1:8080/ >/dev/null
+          compose ps
+
+      - name: Apply real MySQL migrations for the selected services
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          for service in configuration identity gateway; do
+            compose exec -T "$service" php artisan migrate --force
+          done
+
+      - name: Seed synthetic organizations and execute HTTP MFA, role and tenant checks
+        shell: bash
+        env:
+          SRD_JUNIT_PATH: test-results/p10-mysql-auth.junit.xml
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
+          SRD_MAILPIT_URL: http://127.0.0.1:8025
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          fixture_target=/tmp/srd-p10-fixture.json
+          compose cp assembled/tools/create-fixtures.php configuration:/tmp/srd-p10-fixtures.php
+          compose cp assembled/.local/e2e-fixture.json "configuration:$fixture_target"
+          compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+            -e "SRD_FIXTURE_PATH=$fixture_target" configuration php /tmp/srd-p10-fixtures.php configuration
+          compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p10-fixtures.php
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+            -e "SRD_FIXTURE_PATH=$fixture_target" -e SRD_BROWSER_SPEC=chat-switch-organization.spec.mjs \
+            identity php /tmp/srd-p10-fixtures.php identity
+          compose exec -T --user 0 configuration rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
+          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
+          node sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs assembled/.local/e2e-fixture.json
+
+      - name: Upload non-secret integration results and source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: srd-p10-mysql-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/p10-mysql-auth.junit.xml
+            runner-capacity.txt
+            assembled/srd-provenance.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove only this ephemeral Compose project's containers and network
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -f assembled/compose.yaml && -f assembled/.env ]]; then
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml \
+              down --remove-orphans
+          fi
+          # The runner is disposable; project-labelled volumes are not explicitly deleted.
