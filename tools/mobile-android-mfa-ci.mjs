@@ -11,6 +11,7 @@ const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-resul
 const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/android-runner-resources.txt");
 const result = { name: "Android QA app completes real Gateway login and Mailpit MFA", passed: false, message: "not-run" };
 let currentStage = "startup";
+let lastUiLabels = [];
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
 let memorySampleCount = 0;
@@ -64,6 +65,18 @@ function uiNodes() {
   });
 }
 
+function safeUiLabels(nodes) {
+  return [...new Set(nodes
+    .filter((node) => !/EditText$/.test(node.class || ""))
+    .map((node) => (node.text || node["content-desc"] || "").trim())
+    .filter(Boolean)
+    .map((label) => label
+      .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
+      .replace(/\b\d{6}\b/g, "[CODE]")
+      .slice(0, 100)))]
+    .slice(0, 40);
+}
+
 function findNode(nodes, label, { editable = false } = {}) {
   return nodes.find((node) => {
     const named = node.text === label || node["content-desc"] === label;
@@ -85,6 +98,7 @@ async function waitForNode(label, options = {}) {
   while (Date.now() < deadline) {
     sampleAvailableMemory();
     const nodes = uiNodes();
+    lastUiLabels = safeUiLabels(nodes);
     const node = findNode(nodes, label, options);
     if (node) return node;
     attempts += 1;
@@ -236,6 +250,7 @@ try {
   if (memoryInterval) clearInterval(memoryInterval);
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n`);
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\n`;
+  fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${uiDiagnostics}`);
   writeJUnit();
 }
