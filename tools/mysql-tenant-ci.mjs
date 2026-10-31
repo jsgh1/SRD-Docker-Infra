@@ -14,6 +14,8 @@ for (const target of [gateway, mailpit]) {
 
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const cases = [];
+const roleSessions = new Map();
+let lifecycleAdmin = null;
 
 function assert(condition, label) {
   if (!condition) throw new Error(label);
@@ -148,6 +150,18 @@ async function authenticate(role, organizationCode = fixture.codeA || "srd-e2e-a
   return { client: challenge.client, principal: verified.data?.data };
 }
 
+async function switchTenant(auth, organizationCode, termsVersionId, organizationId, label) {
+  const switched = await auth.client.request("POST", "/api/v1/auth/switchOrganization", {
+    organization_code: organizationCode,
+    terms_version_id: termsVersionId,
+    accepted: true,
+  }, await auth.client.csrf());
+  equal(switched.status, 200, `${label}-switch-status`);
+  const principal = await auth.client.request("GET", "/api/v1/me");
+  equal(principal.status, 200, `${label}-principal-status`);
+  equal(principal.data?.data?.organization?.id, organizationId, `${label}-tenant`);
+}
+
 async function runCase(name, operation) {
   try {
     await operation();
@@ -189,6 +203,8 @@ try {
     equal(accepted.data?.data?.role, "registrar", "registrar-role-after-mfa");
   });
 
+  await waitForAuthRateWindow("registrar challenge cooldown after invalid-MFA scenario");
+
   await runCase("all six roles receive server-side permissions for real Gateway routes", async () => {
     const matrix = {
       superadmin: { members: 200, invitations: 422, personsWrite: 422, platform: 200 },
@@ -200,6 +216,7 @@ try {
     };
     for (const [index, [role, expected]] of Object.entries(matrix).entries()) {
       const auth = await authenticate(role);
+      roleSessions.set(role, auth);
       equal(auth.principal?.role, role, `${role}-principal-role`);
       equal(auth.principal?.organization?.id, fixture.orgA, `${role}-tenant-a`);
       equal((await auth.client.request("GET", "/api/v1/persons")).status, 200, `${role}-persons-read`);
@@ -215,7 +232,9 @@ try {
   });
 
   await runCase("session revocation and logout reject old cookies", async () => {
-    const first = await authenticate("admin");
+    const first = roleSessions.get("admin");
+    assert(first?.client, "existing-admin-session-missing");
+    // Reuse the role-matrix session as the old session; only request one new challenge.
     const current = await authenticate("admin");
     const revoked = await current.client.request("POST", "/api/v1/auth/revokeOthers", {}, await current.client.csrf());
     equal(revoked.status, 200, "revoke-other-sessions-status");
@@ -230,7 +249,8 @@ try {
 
   await runCase("membership removal invalidates the member's active session", async () => {
     const registrar = await authenticate("registrar");
-    const admin = await authenticate("admin");
+    lifecycleAdmin = await authenticate("admin");
+    const admin = lifecycleAdmin;
     const listing = await admin.client.request("GET", "/api/v1/members");
     equal(listing.status, 200, "admin-members-list");
     const members = listing.data?.data?.items;
@@ -247,23 +267,16 @@ try {
   });
 
   await runCase("an authorized multi-organization admin can switch tenant context", async () => {
-    const admin = await authenticate("admin");
-    const switched = await admin.client.request("POST", "/api/v1/auth/switchOrganization", {
-      organization_code: fixture.codeB || "srd-e2e-b",
-      terms_version_id: fixture.termsB,
-      accepted: true,
-    }, await admin.client.csrf());
-    equal(switched.status, 200, "authorized-tenant-switch-status");
-    const principal = await admin.client.request("GET", "/api/v1/me");
-    equal(principal.status, 200, "switched-session-status");
-    equal(principal.data?.data?.organization?.id, fixture.orgB, "switched-session-tenant-b");
+    assert(lifecycleAdmin?.client, "lifecycle-admin-session-missing");
+    await switchTenant(lifecycleAdmin, fixture.codeB || "srd-e2e-b", fixture.termsB,
+      fixture.orgB, "authorized-tenant-switch");
   });
 
   await runCase("Records hides and preserves a synthetic person across tenant A and B", async () => {
-    const tenantA = await authenticate("admin", fixture.codeA || "srd-e2e-a", fixture.termsA);
-    const tenantB = await authenticate("admin", fixture.codeB || "srd-e2e-b", fixture.termsB);
-    equal(tenantB.principal?.role, "admin", "tenant-b-admin-role");
-    equal(tenantB.principal?.organization?.id, fixture.orgB, "tenant-b-admin-context");
+    assert(lifecycleAdmin?.client, "lifecycle-admin-session-missing");
+    const tenant = lifecycleAdmin;
+    await switchTenant(tenant, fixture.codeA || "srd-e2e-a", fixture.termsA,
+      fixture.orgA, "idor-enter-tenant-a");
 
     const record = {
       document_type: "CC",
@@ -274,27 +287,31 @@ try {
       positions_version: 0,
       note: "P11 tenant boundary sentinel",
     };
-    const created = await tenantA.client.request("POST", "/api/v1/persons", record, await tenantA.client.csrf());
+    const created = await tenant.client.request("POST", "/api/v1/persons", record, await tenant.client.csrf());
     equal(created.status, 200, "tenant-a-record-create");
     const id = created.data?.data?.id;
     assert(typeof id === "string", "tenant-a-record-id");
-    const ownRead = await tenantA.client.request("GET", `/api/v1/persons/${id}`);
+    const ownRead = await tenant.client.request("GET", `/api/v1/persons/${id}`);
     equal(ownRead.status, 200, "tenant-a-record-read");
     equal(ownRead.data?.data?.first_names, record.first_names, "tenant-a-record-contents");
 
-    const foreignRead = await tenantB.client.request("GET", `/api/v1/persons/${id}`);
+    await switchTenant(tenant, fixture.codeB || "srd-e2e-b", fixture.termsB,
+      fixture.orgB, "idor-enter-tenant-b");
+    const foreignRead = await tenant.client.request("GET", `/api/v1/persons/${id}`);
     equal(foreignRead.status, 404, "tenant-b-foreign-record-hidden");
-    const foreignUpdate = await tenantB.client.request("PATCH", `/api/v1/persons/${id}`, {
+    const foreignUpdate = await tenant.client.request("PATCH", `/api/v1/persons/${id}`, {
       ...record,
       first_names: "Cambio no autorizado",
       version: 1,
-    }, await tenantB.client.csrf());
+    }, await tenant.client.csrf());
     equal(foreignUpdate.status, 404, "tenant-b-foreign-record-update-hidden");
     const foreignPayload = JSON.stringify(foreignRead.data || {}) + JSON.stringify(foreignUpdate.data || {});
     assert(!foreignPayload.includes(record.first_names) && !foreignPayload.includes(record.document_number)
       && !foreignPayload.includes(record.note), "foreign-record-data-not-disclosed");
 
-    const unchanged = await tenantA.client.request("GET", `/api/v1/persons/${id}`);
+    await switchTenant(tenant, fixture.codeA || "srd-e2e-a", fixture.termsA,
+      fixture.orgA, "idor-return-to-tenant-a");
+    const unchanged = await tenant.client.request("GET", `/api/v1/persons/${id}`);
     equal(unchanged.status, 200, "tenant-a-record-remains-readable");
     equal(unchanged.data?.data?.first_names, record.first_names, "tenant-a-record-unchanged");
     equal(unchanged.data?.data?.version, 1, "tenant-a-record-version-unchanged");
