@@ -10,6 +10,8 @@ const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
 const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-results/android-qa-e2e.junit.xml");
 const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/android-runner-resources.txt");
 const result = { name: "Android QA app completes real Gateway login and Mailpit MFA", passed: false, message: "not-run" };
+const junitCases = [];
+let activeCase = "";
 let currentStage = "startup";
 let lastUiLabels = [];
 let lastUiDetails = [];
@@ -284,15 +286,74 @@ async function typeField(label, value) {
   await new Promise((resolve) => setTimeout(resolve, 300));
 }
 
+async function replaceField(label, previousLength, value) {
+  tapNode(await waitForNode(label, { editable: true, scroll: true }));
+  adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
+  if (value) adb(["shell", "input", "text", value]);
+  adb(["shell", "input", "keyevent", "111"]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+}
+
+async function waitForEnabledLabel(label, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    sampleAvailableMemory();
+    const nodes = uiNodes();
+    lastUiLabels = safeUiLabels(nodes);
+    lastUiDetails = safeUiDetails(nodes);
+    lastEditableStates = safeEditableStates(nodes);
+    const node = findNode(nodes, label);
+    if (node && node.enabled !== "false") return nodes;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new TestFailure("android-control-did-not-become-enabled");
+}
+
+function beginCase(name) {
+  activeCase = name;
+}
+
+function passCase() {
+  assert(activeCase, "android-junit-case-not-started");
+  junitCases.push({ name: activeCase, passed: true });
+  activeCase = "";
+}
+
+function assertSyntheticActiveSessions(fixtureUserId, expected) {
+  if (process.env.SRD_ASSERT_FIXTURE_SESSIONS !== "1") return;
+  const project = process.env.SRD_COMPOSE_PROJECT;
+  assert(Boolean(project), "qa-compose-project-unavailable-for-session-probe");
+  try {
+    execFileSync("docker", [
+      "compose", "--project-name", project,
+      "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
+      "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-session-state.php",
+      fixtureUserId, String(expected),
+    ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
+  } catch {
+    throw new TestFailure("synthetic-session-state-mismatch");
+  }
+}
+
 function xmlEscape(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
 
 function writeJUnit() {
   fs.mkdirSync(path.dirname(junitPath), { recursive: true });
-  const failure = result.passed ? "" : `  <failure message="${xmlEscape(result.message)}"/>`;
+  const cases = [...junitCases];
+  if (activeCase || !result.passed) {
+    cases.push({ name: activeCase || result.name, passed: false, message: result.message });
+  }
+  if (cases.length === 0) cases.push({ name: result.name, passed: result.passed, message: result.message });
+  const failures = cases.filter((testCase) => !testCase.passed).length;
+  const testXml = cases.map((testCase) => {
+    const failure = testCase.passed ? "" : `\n    <failure message="${xmlEscape(testCase.message || result.message)}"/>\n  `;
+    return `  <testcase classname="srd.android" name="${xmlEscape(testCase.name)}">${failure}</testcase>`;
+  }).join("\n");
   fs.writeFileSync(junitPath,
-    `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="SRD Android QA E2E" tests="1" failures="${result.passed ? 0 : 1}" errors="0" skipped="0">\n  <testcase classname="srd.android" name="${xmlEscape(result.name)}">${failure}</testcase>\n</testsuite>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="SRD Android QA E2E" tests="${cases.length}" failures="${failures}" errors="0" skipped="0">\n${testXml}\n</testsuite>\n`,
     { encoding: "utf8" });
 }
 
@@ -329,9 +390,11 @@ async function run() {
 
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
   const email = fixture.mobile_user?.email;
+  const mobileUserId = fixture.mobile_user?.id;
   const password = fixture.password;
   const organizationCode = fixture.codeA || "srd-e2e-a";
-  assert(email === "android@srd-e2e.test" && typeof password === "string" && password.length >= 32, "synthetic-mobile-account-invalid");
+  assert(email === "android@srd-e2e.test" && /^[0-9a-f-]{36}$/i.test(mobileUserId || "")
+    && typeof password === "string" && password.length >= 32, "synthetic-mobile-account-invalid");
 
   const [csrfResponse, sessionResponse, mailpitMessages] = await Promise.all([
     fetch(new URL("/api/v1/csrf", gateway), { signal: AbortSignal.timeout(10000) }),
@@ -356,6 +419,7 @@ async function run() {
   stage("install-and-launch-apk");
   adb(["install", "-t", apkPath]);
   adb(["shell", "monkey", "-p", "com.srd.mobile.qa", "-c", "android.intent.category.LAUNCHER", "1"]);
+  assertSyntheticActiveSessions(mobileUserId, 0);
   stage("locate-join-code-field");
   await waitForNode("C\u00f3digo de junta", { editable: true });
   console.log("PASS Android QA APK installed and launched");
@@ -366,14 +430,45 @@ async function run() {
   await tapLabel("Continuar");
   stage("wait-for-organization-card");
   await waitForNode("Junta de prueba A");
+  stage("accept-organization-terms");
+  await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
+  await waitForNode("\u2611");
+
+  beginCase("Android form validation rejects empty credentials");
+  stage("reject-empty-login-fields");
+  await tapLabel("Ingresar");
+  await waitForNode("Ingresa correo y contrase\u00f1a.");
+  assert(authUiState(uiNodes()) === "login-required", "empty-login-left-login-screen");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  beginCase("Android rejects an incorrect password without opening MFA or creating a session");
+  stage("reject-incorrect-password");
   stage("enter-account-email");
   await typeField("Correo electr\u00f3nico", email);
   stage("enter-account-password");
-  await typeField("Contrase\u00f1a", password);
-  stage("accept-organization-terms");
-  await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
-  stage("confirm-terms-checkbox");
-  await waitForNode("\u2611");
+  const wrongPassword = `${password}x`;
+  await typeField("Contrase\u00f1a", wrongPassword);
+  stage("submit-incorrect-password");
+  await tapLabel("Ingresar");
+  await waitForNode("Correo o contrase\u00f1a incorrectos. Revisa los datos e int\u00e9ntalo de nuevo.");
+  assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  beginCase("Android does not disclose whether an account exists");
+  stage("reject-nonexistent-account");
+  const missingEmail = "missing-account@srd-e2e.test";
+  await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
+  await replaceField("Contrase\u00f1a", wrongPassword.length, password);
+  await tapLabel("Ingresar");
+  await waitForNode("Correo o contrase\u00f1a incorrectos. Revisa los datos e int\u00e9ntalo de nuevo.");
+  assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  await replaceField("Correo electr\u00f3nico", missingEmail.length, email);
+  await replaceField("Contrase\u00f1a", password.length, password);
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
@@ -393,12 +488,25 @@ async function run() {
 
   stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);
-  stage("enter-mfa-code");
-  await typeField("C\u00f3digo de verificaci\u00f3n", code);
+  beginCase("Android rejects an incorrect MFA code and leaves the fixture session anonymous");
+  stage("reject-incorrect-mfa-code");
+  const wrongCode = `${code[0] === "9" ? "0" : String(Number(code[0]) + 1)}${code.slice(1)}`;
+  await typeField("C\u00f3digo de verificaci\u00f3n", wrongCode);
+  await tapLabel("Verificar y entrar");
+  await waitForNode("Revisa los datos del formulario.");
+  const invalidMfaNodes = await waitForEnabledLabel("Verificar y entrar");
+  assert(authUiState(invalidMfaNodes) === "mfa-challenge", "invalid-mfa-left-challenge-screen-unverified");
+  assert(!findNode(invalidMfaNodes, "Hola, Prueba Android"), "invalid-mfa-opened-authenticated-home");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  stage("enter-valid-mfa-code");
+  await replaceField("C\u00f3digo de verificaci\u00f3n", 6, code);
   stage("submit-mfa-code");
   await tapLabel("Verificar y entrar");
   stage("wait-for-authenticated-home");
   await waitForNode("Hola, Prueba Android");
+  assertSyntheticActiveSessions(mobileUserId, 1);
   stage("verify-people-section");
   await waitForNode("PERSONAS");
   const viewerHomeNodes = uiNodes();
@@ -426,6 +534,7 @@ async function run() {
     await tapLabel("Cerrar sesión");
     sessionObservations.afterUiLogout = await waitForAuthUiState();
     assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "android-logout-did-not-return-to-anonymous-ui");
+    assertSyntheticActiveSessions(mobileUserId, 0);
 
     stage("verify-logout-after-process-restart");
     adb(["shell", "am", "force-stop", "com.srd.mobile.qa"]);
@@ -438,6 +547,8 @@ async function run() {
     sessionObservations.afterLogoutForceStop = "not-run-session-not-retained";
   }
 
+  beginCase("Android completes real Mailpit MFA and shows viewer permissions in the native UI");
+  passCase();
   result.passed = true;
   result.message = "";
   console.log("PASS Android QA authenticated through MySQL Identity, Mailpit MFA and the isolated Gateway");

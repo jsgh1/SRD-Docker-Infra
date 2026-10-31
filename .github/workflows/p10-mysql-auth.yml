@@ -9,6 +9,7 @@ on:
       - 'tools/mysql-tenant-ci.mjs'
       - 'tools/fixture-credentials.mjs'
       - 'tools/create-fixtures.php'
+      - 'tools/assert-fixture-session-state.php'
       - 'tools/mobile-android-mfa-ci.mjs'
       - 'tools/assemble-workspace.mjs'
       - 'compose.yaml'
@@ -236,6 +237,7 @@ jobs:
             identity php /tmp/srd-p10-fixtures.php identity
           compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
           node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
+          compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
 
       - name: Verify Android QA runner capacity and KVM
         shell: bash
@@ -349,6 +351,9 @@ jobs:
           SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8080
           SRD_MAILPIT_URL: http://127.0.0.1:8025
           SRD_ANDROID_JUNIT_PATH: test-results/android-qa-e2e.junit.xml
+          SRD_ASSERT_FIXTURE_SESSIONS: '1'
+          SRD_COMPOSE_ENV_FILE: assembled/.env
+          SRD_COMPOSE_FILE: assembled/compose.yaml
 
       - name: Upload non-secret integration results and source provenance
         if: always()
