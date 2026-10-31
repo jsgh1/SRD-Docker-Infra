@@ -68,6 +68,7 @@ class HttpSession {
       status: response.status,
       data,
       retryAfter: response.headers.get("retry-after"),
+      rateLimit: response.headers.get("x-ratelimit-limit"),
       rateLimitRemaining: response.headers.get("x-ratelimit-remaining"),
     };
   }
@@ -124,8 +125,13 @@ async function startChallenge(role, organizationCode, termsVersionId) {
     accepted: true,
   }, await client.csrf());
   const retryAfter = /^\d{1,5}$/.test(login.retryAfter || "") ? login.retryAfter : "na";
+  const limit = /^\d{1,5}$/.test(login.rateLimit || "") ? login.rateLimit : "na";
   const remaining = /^\d{1,5}$/.test(login.rateLimitRemaining || "") ? login.rateLimitRemaining : "na";
-  equal(login.status, 200, `login-challenge-${role}-http-${login.status}-retry-${retryAfter}-remaining-${remaining}`);
+  const rawErrorCode = login.data?.error?.code;
+  const errorCode = typeof rawErrorCode === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(rawErrorCode)
+    ? rawErrorCode : "na";
+  equal(login.status, 200,
+    `login-challenge-${role}-http-${login.status}-code-${errorCode}-retry-${retryAfter}-limit-${limit}-remaining-${remaining}`);
   const challengeId = login.data?.data?.challenge_id;
   assert(typeof challengeId === "string", "mfa-challenge-missing");
   return { client, challengeId, previousIds, user };
