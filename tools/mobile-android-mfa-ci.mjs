@@ -545,14 +545,16 @@ async function run() {
   passCase();
 
   beginCase("Android reauthenticates after server revocation with one new session");
+  stage("reauthenticate-after-server-revocation");
   const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
   if (!findNode(uiNodes(), "\u2611")) {
     await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
     await waitForNode("\u2611");
   }
-  await typeField("Correo electr\u00f3nico", email);
-  await typeField("Contrase\u00f1a", password);
+  await replaceField("Correo electr\u00f3nico", email.length, email);
+  await replaceField("Contrase\u00f1a", password.length, password);
   await tapLabel("Ingresar");
+  stage("wait-for-reauthentication-mfa-challenge");
   await waitForNode("Revisa tu correo");
   const reauthenticationCode = await waitForMfaCode(email, beforeReauthentication);
   await typeField("C\u00f3digo de verificaci\u00f3n", reauthenticationCode);
