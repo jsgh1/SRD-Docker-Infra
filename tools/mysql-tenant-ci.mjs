@@ -29,7 +29,7 @@ function xml(value) {
 }
 
 function safeErrorLabel(error) {
-  if (error instanceof Error && /^[a-z0-9_-]+$/.test(error.message)) return error.message;
+  if (error instanceof Error && /^[A-Za-z0-9_-]+$/.test(error.message)) return error.message;
   const code = error?.cause?.code;
   if (typeof code === "string" && /^[A-Z0-9_]+$/.test(code)) return `network-${code.toLowerCase()}`;
   if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) return "fetch-failed";
