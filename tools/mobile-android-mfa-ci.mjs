@@ -13,6 +13,7 @@ const result = { name: "Android QA app completes real Gateway login and Mailpit 
 let currentStage = "startup";
 let lastUiLabels = [];
 let lastUiDetails = [];
+let lastEditableStates = [];
 let freshMfaMailObserved = "not-checked";
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -90,10 +91,23 @@ function safeUiDetails(nodes) {
         .replace(/\b\d{6}\b/g, "[CODE]")
         .slice(0, 80);
       const type = (node.class || "node").split(".").at(-1);
-      return `${type} ${node.bounds || "[no-bounds]"} ${safeLabel}`;
+      return `${type} ${node.bounds || "[no-bounds]"} clickable=${node.clickable || "false"} enabled=${node.enabled || "false"} focused=${node["focused"] || "false"} ${safeLabel}`;
     })
     .filter(Boolean))]
     .slice(0, 50);
+}
+
+function safeEditableStates(nodes) {
+  return nodes
+    .filter((node) => /EditText$/.test(node.class || ""))
+    .map((node) => {
+      const label = (node["content-desc"] || node["hint"] || "field")
+        .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
+        .replace(/\b\d{6}\b/g, "[CODE]")
+        .slice(0, 60);
+      return `${label}: hasText=${Boolean(node.text)} enabled=${node.enabled || "false"} focused=${node.focused || "false"}`;
+    })
+    .slice(0, 12);
 }
 
 function findNode(nodes, label, { editable = false } = {}) {
@@ -106,9 +120,71 @@ function findNode(nodes, label, { editable = false } = {}) {
 function tapNode(node) {
   const match = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(node?.bounds || "");
   assert(match, "ui-element-bounds-unavailable");
-  const x = Math.floor((Number(match[1]) + Number(match[3])) / 2);
-  const y = Math.floor((Number(match[2]) + Number(match[4])) / 2);
+  const left = Math.min(Number(match[1]), Number(match[3]));
+  const top = Math.min(Number(match[2]), Number(match[4]));
+  const right = Math.max(Number(match[1]), Number(match[3]));
+  const bottom = Math.max(Number(match[2]), Number(match[4]));
+  assert(right > left && bottom > top, "ui-element-bounds-empty");
+  const x = Math.floor((left + right) / 2);
+  const y = Math.floor((top + bottom) / 2);
   adb(["shell", "input", "tap", String(x), String(y)]);
+}
+
+function displaySize() {
+  const output = adb(["shell", "wm", "size"]);
+  const match = /(?:Physical|Override) size:\s*(\d+)x(\d+)/.exec(output);
+  assert(match, "android-display-size-unavailable");
+  return {width: Number(match[1]), height: Number(match[2])};
+}
+
+function nodeBounds(node) {
+  const match = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(node?.bounds || "");
+  if (!match) return undefined;
+  return {
+    left: Math.min(Number(match[1]), Number(match[3])),
+    top: Math.min(Number(match[2]), Number(match[4])),
+    right: Math.max(Number(match[1]), Number(match[3])),
+    bottom: Math.max(Number(match[2]), Number(match[4])),
+  };
+}
+
+function scrollDownOnePage() {
+  const nodes = uiNodes();
+  lastUiLabels = safeUiLabels(nodes);
+  lastUiDetails = safeUiDetails(nodes);
+  lastEditableStates = safeEditableStates(nodes);
+  const scrollView = nodes.find((item) => item.class === "android.widget.ScrollView");
+  const bounds = nodeBounds(scrollView);
+  assert(bounds && bounds.right > bounds.left && bounds.bottom > bounds.top, "android-scroll-view-unavailable");
+  const x = Math.floor((bounds.left + bounds.right) / 2);
+  const startY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.78);
+  const endY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.32);
+  adb(["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "350"]);
+}
+
+async function tapVisibleLabel(label) {
+  const {height} = displaySize();
+  const safeBottom = height - 110;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const nodes = uiNodes();
+    lastUiLabels = safeUiLabels(nodes);
+    lastUiDetails = safeUiDetails(nodes);
+    lastEditableStates = safeEditableStates(nodes);
+    const node = findNode(nodes, label);
+    if (node) {
+      const bounds = nodeBounds(node);
+      if (bounds && bounds.bottom > bounds.top && bounds.top >= 0 && bounds.bottom <= safeBottom) {
+        assert(node.enabled !== "false", "ui-element-disabled");
+        assert(node.clickable !== "false", "ui-element-not-clickable");
+        tapNode(node);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return;
+      }
+    }
+    scrollDownOnePage();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw new TestFailure("ui-element-not-visible-after-scroll");
 }
 
 async function waitForNode(label, options = {}) {
@@ -138,8 +214,8 @@ async function waitForNode(label, options = {}) {
 }
 
 async function tapLabel(label) {
-  tapNode(await waitForNode(label, { scroll: true }));
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await waitForNode(label, { scroll: true });
+  await tapVisibleLabel(label);
 }
 
 async function typeField(label, value) {
@@ -281,7 +357,7 @@ try {
   if (memoryInterval) clearInterval(memoryInterval);
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\n`;
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
   fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${uiDiagnostics}`);
   writeJUnit();
 }
