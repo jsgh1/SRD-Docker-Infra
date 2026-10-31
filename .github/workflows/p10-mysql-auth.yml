@@ -131,8 +131,11 @@ jobs:
           test -f assembled/compose.yaml
           test -f assembled/tools/create-fixtures.php
           test -f assembled/tools/fixture-credentials.mjs
-          node assembled/tools/initialize.mjs
-          node assembled/tools/fixture-credentials.mjs
+          (
+            cd assembled
+            node tools/initialize.mjs
+            node tools/fixture-credentials.mjs
+          )
           cat > "$RUNNER_TEMP/p10-auth-compose.yaml" <<'YAML'
           services:
             gateway:
@@ -245,7 +248,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          if [[ -f assembled/compose.yaml ]]; then
+          if [[ -f assembled/compose.yaml && -f assembled/.env ]]; then
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
               -f assembled/compose.yaml -f "$RUNNER_TEMP/p10-auth-compose.yaml" \
               down --remove-orphans
