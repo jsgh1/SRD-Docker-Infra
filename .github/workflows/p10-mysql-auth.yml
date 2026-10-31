@@ -9,6 +9,7 @@ on:
       - 'tools/mysql-tenant-ci.mjs'
       - 'tools/fixture-credentials.mjs'
       - 'tools/create-fixtures.php'
+      - 'tools/mobile-android-mfa-ci.mjs'
       - 'tools/assemble-workspace.mjs'
       - 'compose.yaml'
       - 'docker/php.Dockerfile'
