@@ -100,6 +100,11 @@ async function waitForCode(email, previousIds) {
   throw new Error("mfa-message-timeout");
 }
 
+async function waitForAuthRateWindow(reason) {
+  console.log(`WAIT auth throttle window: ${reason}`);
+  await new Promise((resolve) => setTimeout(resolve, 65000));
+}
+
 async function startChallenge(role, organizationCode, termsVersionId) {
   const user = fixture.users[role];
   assert(user?.email && fixture.password, "synthetic-fixture-incomplete");
@@ -152,6 +157,8 @@ async function writeJUnit() {
 }
 
 try {
+  await waitForAuthRateWindow("reset after P10 baseline");
+
   await runCase("one invalid MFA code is rejected without consuming the valid challenge", async () => {
     const challenge = await startChallenge("registrar", fixture.codeA || "srd-e2e-a", fixture.termsA);
     const code = await waitForCode(challenge.user.email, challenge.previousIds);
@@ -178,7 +185,7 @@ try {
       auditor: { members: 403, invitations: 403, personsWrite: 403, platform: 403 },
       viewer: { members: 403, invitations: 403, personsWrite: 403, platform: 403 },
     };
-    for (const [role, expected] of Object.entries(matrix)) {
+    for (const [index, [role, expected]] of Object.entries(matrix).entries()) {
       const auth = await authenticate(role);
       equal(auth.principal?.role, role, `${role}-principal-role`);
       equal(auth.principal?.organization?.id, fixture.orgA, `${role}-tenant-a`);
@@ -190,6 +197,7 @@ try {
         expected.personsWrite, `${role}-persons-write-gate`);
       equal((await auth.client.request("GET", "/api/v1/platform/accounts")).status,
         expected.platform, `${role}-platform-manage`);
+      if (index === 2) await waitForAuthRateWindow("between the first and second three-role cohorts");
     }
   });
 
@@ -204,6 +212,8 @@ try {
     equal(logout.status, 200, "logout-status");
     equal((await current.client.request("GET", "/api/v1/me")).status, 401, "logged-out-session-rejected");
   });
+
+  await waitForAuthRateWindow("before membership, tenant-switch and object-boundary cases");
 
   await runCase("membership removal invalidates the member's active session", async () => {
     const registrar = await authenticate("registrar");
