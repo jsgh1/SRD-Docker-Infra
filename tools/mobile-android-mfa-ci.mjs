@@ -148,6 +148,28 @@ function nodeBounds(node) {
   };
 }
 
+function tapTargetForLabel(nodes, labelNode) {
+  if (labelNode.clickable !== "false" && labelNode.enabled !== "false") return labelNode;
+  const bounds = nodeBounds(labelNode);
+  if (!bounds) return undefined;
+  const centerX = (bounds.left + bounds.right) / 2;
+  const centerY = (bounds.top + bounds.bottom) / 2;
+  return nodes
+    .filter((node) => node.clickable === "true" && node.enabled !== "false")
+    .filter((node) => {
+      const candidate = nodeBounds(node);
+      return candidate
+        && centerX >= candidate.left && centerX <= candidate.right
+        && centerY >= candidate.top && centerY <= candidate.bottom;
+    })
+    .sort((a, b) => {
+      const first = nodeBounds(a);
+      const second = nodeBounds(b);
+      return (first.right - first.left) * (first.bottom - first.top)
+        - (second.right - second.left) * (second.bottom - second.top);
+    })[0];
+}
+
 function scrollDownOnePage() {
   const nodes = uiNodes();
   lastUiLabels = safeUiLabels(nodes);
@@ -170,12 +192,13 @@ async function tapVisibleLabel(label) {
     lastUiLabels = safeUiLabels(nodes);
     lastUiDetails = safeUiDetails(nodes);
     lastEditableStates = safeEditableStates(nodes);
-    const node = findNode(nodes, label);
+    const labelNode = findNode(nodes, label);
+    const node = labelNode && tapTargetForLabel(nodes, labelNode);
+    if (labelNode && !node) throw new TestFailure("ui-action-parent-unavailable");
     if (node) {
       const bounds = nodeBounds(node);
       if (bounds && bounds.bottom > bounds.top && bounds.top >= 0 && bounds.bottom <= safeBottom) {
         assert(node.enabled !== "false", "ui-element-disabled");
-        assert(node.clickable !== "false", "ui-element-not-clickable");
         tapNode(node);
         await new Promise((resolve) => setTimeout(resolve, 400));
         return;
