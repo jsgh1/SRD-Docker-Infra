@@ -1,4 +1,4 @@
-name: P10 MySQL authentication and tenant integration
+name: MySQL authentication, roles and tenant integration
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/p10-mysql-auth.yml'
       - 'tools/mysql-auth-ci.mjs'
+      - 'tools/mysql-tenant-ci.mjs'
       - 'tools/fixture-credentials.mjs'
       - 'tools/create-fixtures.php'
       - 'tools/assemble-workspace.mjs'
@@ -128,6 +129,7 @@ jobs:
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
           node --check sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs
+          node --check sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs
           test -f assembled/compose.yaml
           test -f assembled/tools/create-fixtures.php
           test -f assembled/tools/fixture-credentials.mjs
@@ -143,7 +145,7 @@ jobs:
           docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
             -f assembled/compose.yaml config --quiet
 
-      - name: Build only Gateway, Identity and Configuration sequentially
+      - name: Build only Configuration, Identity, Records, Gateway and Web sequentially
         shell: bash
         run: |
           set -euo pipefail
@@ -154,6 +156,7 @@ jobs:
           compose pull mysql mailpit
           compose build identity
           compose build configuration
+          compose build records
           compose build gateway
           compose build web
 
@@ -174,7 +177,7 @@ jobs:
           echo 'Mailpit API did not become available.' >&2
           exit 1
 
-      - name: Start only Configuration, Identity and Gateway
+      - name: Start only Configuration, Identity, Records and Gateway
         shell: bash
         run: |
           set -euo pipefail
@@ -184,6 +187,7 @@ jobs:
           }
           compose up -d --wait --wait-timeout 180 configuration
           compose up -d --wait --wait-timeout 180 identity
+          compose up -d --wait --wait-timeout 180 records
           compose up -d --wait --wait-timeout 180 gateway
           compose up -d --wait --wait-timeout 180 web
           compose port web 80
@@ -198,11 +202,11 @@ jobs:
             docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
               -f assembled/compose.yaml "$@"
           }
-          for service in configuration identity gateway; do
+          for service in configuration identity records gateway; do
             compose exec -T "$service" php artisan migrate --force
           done
 
-      - name: Seed synthetic organizations and execute HTTP MFA, role and tenant checks
+      - name: Seed synthetic tenants and run the P10 baseline plus P11 HTTP security matrix
         shell: bash
         env:
           SRD_JUNIT_PATH: test-results/p10-mysql-auth.junit.xml
@@ -225,16 +229,21 @@ jobs:
             -e "SRD_FIXTURE_PATH=$fixture_target" -e SRD_BROWSER_SPEC=chat-switch-organization.spec.mjs \
             identity php /tmp/srd-p10-fixtures.php identity
           compose exec -T --user 0 configuration rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
-          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
           node sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs assembled/.local/e2e-fixture.json
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+            -e SRD_P11_TENANT_RECORDS=1 -e "SRD_FIXTURE_PATH=$fixture_target" \
+            identity php /tmp/srd-p10-fixtures.php identity
+          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
+          node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
 
       - name: Upload non-secret integration results and source provenance
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: srd-p10-mysql-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          name: srd-mysql-auth-tenant-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             test-results/p10-mysql-auth.junit.xml
+            test-results/p11-mysql-tenant.junit.xml
             runner-capacity.txt
             assembled/srd-provenance.json
           if-no-files-found: warn
