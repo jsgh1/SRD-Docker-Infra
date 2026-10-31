@@ -251,13 +251,15 @@ jobs:
             exit 1
           fi
           test -c /dev/kvm
-          sudo chgrp kvm /dev/kvm
-          sudo chmod g+rw /dev/kvm
+          runner_user="$(id -un)"
+          sudo chown "$runner_user" /dev/kvm
+          sudo chmod 0600 /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           {
             echo "Android runner MemAvailableGiB: $((mem_available_kb / 1024 / 1024))"
             echo "Android runner TempDiskAvailableGiB: $((disk_available_kb / 1024 / 1024))"
-            echo 'KVM: readable and writable'
+            echo 'KVM: readable and writable by the runner user'
+            stat -c 'KVM device permissions: %a' /dev/kvm
           } | tee android-runner-capacity.txt
 
       - name: Set up Java 17 for the QA APK
