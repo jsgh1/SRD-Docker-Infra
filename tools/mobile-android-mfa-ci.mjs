@@ -10,6 +10,7 @@ const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
 const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-results/android-qa-e2e.junit.xml");
 const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/android-runner-resources.txt");
 const result = { name: "Android QA app completes real Gateway login and Mailpit MFA", passed: false, message: "not-run" };
+let currentStage = "startup";
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
 let memorySampleCount = 0;
@@ -33,6 +34,11 @@ class TestFailure extends Error {
 
 function assert(condition, code) {
   if (!condition) throw new TestFailure(code);
+}
+
+function stage(name) {
+  currentStage = name;
+  console.log(`STEP Android QA: ${name}`);
 }
 
 function adb(args) {
@@ -178,26 +184,42 @@ async function run() {
   const deviceLines = adb(["devices"]).split(/\r?\n/).filter((line) => /^emulator-\d+\s+device\b/.test(line));
   assert(deviceLines.length === 1, "expected-one-android-emulator");
   selectedSerial = deviceLines[0].split(/\s+/)[0];
+  stage("install-and-launch-apk");
   adb(["install", "-t", apkPath]);
   adb(["shell", "monkey", "-p", "com.srd.mobile.qa", "-c", "android.intent.category.LAUNCHER", "1"]);
+  stage("locate-join-code-field");
   await waitForNode("C\u00f3digo de junta", { editable: true });
   console.log("PASS Android QA APK installed and launched");
 
+  stage("enter-join-code");
   await typeField("C\u00f3digo de junta", organizationCode);
+  stage("tap-continue-after-join-code");
   await tapLabel("Continuar");
+  stage("wait-for-organization-card");
   await waitForNode("Junta de prueba A");
+  stage("enter-account-email");
   await typeField("Correo electr\u00f3nico", email);
+  stage("enter-account-password");
   await typeField("Contrase\u00f1a", password);
+  stage("accept-organization-terms");
   await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
+  stage("confirm-terms-checkbox");
   await waitForNode("\u2611");
+  stage("submit-login");
   await tapLabel("Ingresar");
+  stage("wait-for-real-mfa-challenge");
   await waitForNode("Revisa tu correo");
   console.log("PASS Android QA reached the real MFA challenge");
 
+  stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);
+  stage("enter-mfa-code");
   await typeField("C\u00f3digo de verificaci\u00f3n", code);
+  stage("submit-mfa-code");
   await tapLabel("Verificar y entrar");
+  stage("wait-for-authenticated-home");
   await waitForNode("Hola, Prueba Android");
+  stage("verify-people-section");
   await waitForNode("PERSONAS");
   result.passed = true;
   result.message = "";
@@ -207,7 +229,7 @@ async function run() {
 try {
   await run();
 } catch (error) {
-  result.message = error instanceof TestFailure ? error.code : "unexpected-test-error";
+  result.message = `${error instanceof TestFailure ? error.code : "unexpected-test-error"}:${currentStage}`;
   console.error(`FAIL Android QA E2E: ${result.message}`);
   process.exitCode = 1;
 } finally {
