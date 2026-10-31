@@ -113,7 +113,7 @@ async function startChallenge(role, organizationCode, termsVersionId) {
     terms_version_id: termsVersionId,
     accepted: true,
   }, await client.csrf());
-  equal(login.status, 200, "login-challenge");
+  equal(login.status, 200, `login-challenge-http-${login.status}`);
   const challengeId = login.data?.data?.challenge_id;
   assert(typeof challengeId === "string", "mfa-challenge-missing");
   return { client, challengeId, previousIds, user };
