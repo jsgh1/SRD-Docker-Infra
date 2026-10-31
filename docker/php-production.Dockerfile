@@ -10,6 +10,7 @@ RUN test -n "$SERVICE" && apt-get update && apt-get install -y --no-install-reco
     && if [ "$SERVICE" = files ]; then apt-get install -y --no-install-recommends poppler-utils ffmpeg && docker-php-ext-install exif; fi \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+RUN printf 'expose_php=Off\n' > /usr/local/etc/php/conf.d/zz-srd-hardening.ini
 WORKDIR /app/services/${SERVICE}
 COPY packages/php /app/packages/php
 COPY services/${SERVICE} /app/services/${SERVICE}

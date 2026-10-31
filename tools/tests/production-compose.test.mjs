@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const config = JSON.parse(fs.readFileSync(path.join(root, 'compose.production.yaml'), 'utf8'));
+const productionPhpDockerfile = fs.readFileSync(path.join(root, 'docker/php-production.Dockerfile'), 'utf8');
+
+test('production Apache PHP image does not disclose the PHP runtime version', () => {
+  assert.match(productionPhpDockerfile, /^FROM php:8\.4-apache-bookworm/m);
+  assert.match(productionPhpDockerfile, /expose_php=Off/);
+});
 
 test('production exposes only the HTTPS edge and bounded TURN relay', () => {
   assert.deepEqual(config.services.caddy.ports, ['80:80', '443:443']);
