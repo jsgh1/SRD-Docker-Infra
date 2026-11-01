@@ -1,6 +1,16 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  authUiState,
+  decodeXml,
+  editableValue,
+  findNode,
+  findNodeContaining,
+  safeEditableStates,
+  safeUiDetails,
+  safeUiLabels,
+} from "./mobile-android-ui.mjs";
 
 const apkPath = path.resolve(process.env.SRD_ANDROID_APK || "");
 const fixturePath = path.resolve(process.env.SRD_FIXTURE_PATH || "");
@@ -79,10 +89,6 @@ function adb(args) {
   }
 }
 
-function decodeXml(value) {
-  return value.replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-}
-
 function uiNodes() {
   const dumpPath = "/sdcard/srd-window.xml";
   let lastFailure = "android-ui-hierarchy-dump-unavailable";
@@ -115,79 +121,6 @@ function uiNodes() {
     }
   }
   throw new TestFailure(lastFailure);
-}
-
-function safeUiLabels(nodes) {
-  return [...new Set(nodes
-    .filter((node) => !/EditText$/.test(node.class || ""))
-    .map((node) => (node.text || node["content-desc"] || "").trim())
-    .filter(Boolean)
-    .map((label) => label
-      .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
-      .replace(/\b\d{6}\b/g, "[CODE]")
-      .slice(0, 100)))]
-    .slice(0, 40);
-}
-
-function safeUiDetails(nodes) {
-  return [...new Set(nodes
-    .filter((node) => !/EditText$/.test(node.class || ""))
-    .map((node) => {
-      const label = (node.text || node["content-desc"] || "").trim();
-      if (!label) return "";
-      const safeLabel = label
-        .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
-        .replace(/\b\d{6}\b/g, "[CODE]")
-        .slice(0, 80);
-      const type = (node.class || "node").split(".").at(-1);
-      return `${type} ${node.bounds || "[no-bounds]"} clickable=${node.clickable || "false"} enabled=${node.enabled || "false"} focused=${node["focused"] || "false"} ${safeLabel}`;
-    })
-    .filter(Boolean))]
-    .slice(0, 50);
-}
-
-function safeEditableStates(nodes) {
-  return nodes
-    .filter((node) => /EditText$/.test(node.class || ""))
-    .map((node) => {
-      const rawLabel = node["content-desc"] || node["hint"] || "field";
-      const label = rawLabel
-        .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
-        .replace(/\b\d{6}\b/g, "[CODE]")
-        .slice(0, 60);
-      const textLength = editableValue(node, rawLabel).length;
-      return `${label}: hasText=${textLength > 0} textLength=${textLength} enabled=${node.enabled || "false"} focused=${node.focused || "false"}`;
-    })
-    .slice(0, 12);
-}
-
-function findNode(nodes, label, { editable = false } = {}) {
-  return nodes.find((node) => {
-    const named = node.text === label || node["content-desc"] === label;
-    return named && (!editable || /EditText$/.test(node.class || ""));
-  });
-}
-
-function findNodeContaining(nodes, label) {
-  return nodes.find((node) => (node.text || node["content-desc"] || "").includes(label));
-}
-
-function editableValue(node, label = "") {
-  const value = node?.text || "";
-  const hint = node?.hint || "";
-  if (!value || (hint && value === hint)) return "";
-  if (label === "Correo electr\u00f3nico" && value === "tu@correo.com") return "";
-  if (label === "Contrase\u00f1a" && value === "Contrase\u00f1a") return "";
-  return value;
-}
-
-function authUiState(nodes) {
-  if (findNode(nodes, "Hola, Prueba Android")) return "authenticated-home";
-  if (findNode(nodes, "Correo electrónico", { editable: true })) return "login-required";
-  if (findNode(nodes, "Código de junta", { editable: true })) return "organization-selection";
-  if (findNode(nodes, "Revisa tu correo")) return "mfa-challenge";
-  if (nodes.some((node) => (node.text || "").includes("No se pudo comprobar la sesión"))) return "session-restore-error";
-  return undefined;
 }
 
 async function waitForAuthUiState(timeoutMs = 30000) {
@@ -766,6 +699,18 @@ async function run() {
   stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);
   if (isExpoClient) {
+    beginCase("Expo SDK 58 rejects an incorrect MFA code without creating a session");
+    stage("reject-incorrect-expo-mfa-code");
+    const wrongExpoCode = `${code[0] === "9" ? "0" : String(Number(code[0]) + 1)}${code.slice(1)}`;
+    await typeField("C\u00f3digo de verificaci\u00f3n", wrongExpoCode);
+    await tapLabel("Verificar y entrar");
+    await waitForNode("Revisa los datos del formulario.");
+    const rejectedExpoMfaNodes = await waitForEnabledLabel("Verificar y entrar");
+    assert(authUiState(rejectedExpoMfaNodes) === "mfa-challenge", "expo-invalid-mfa-left-challenge-screen-unverified");
+    assert(!findNode(rejectedExpoMfaNodes, "Hola, Prueba Android"), "expo-invalid-mfa-opened-authenticated-home");
+    assertSyntheticActiveSessions(mobileUserId, 0);
+    passCase();
+
     beginCase("Expo SDK 58 completes real Gateway and Mailpit MFA and renders viewer permissions");
     stage("submit-valid-expo-mfa-code");
     await typeField("C\u00f3digo de verificaci\u00f3n", code);

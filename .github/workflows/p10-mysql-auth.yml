@@ -14,6 +14,8 @@ on:
       - 'tools/manage-fixture-mobile-challenge.php'
       - 'tools/set-fixture-mobile-role.php'
       - 'tools/mobile-android-mfa-ci.mjs'
+      - 'tools/mobile-android-ui.mjs'
+      - 'tools/mobile-android-ui.test.mjs'
       - 'tools/run-p14-android-acceptance.sh'
       - 'tools/assemble-workspace.mjs'
       - 'compose.yaml'
@@ -29,8 +31,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  android-harness-unit:
+    name: Fast Android harness unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test Android UI parsing, placeholders and redaction without an emulator
+        run: node --test tools/mobile-android-ui.test.mjs
+
   mysql-auth-integration:
     name: Real MySQL, SMTP MFA, Android QA and tenant boundary
+    needs: android-harness-unit
     runs-on: ubuntu-latest
     timeout-minutes: 65
     env:
