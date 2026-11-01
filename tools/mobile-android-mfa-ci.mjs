@@ -322,6 +322,23 @@ async function tapLabel(label) {
   await tapVisibleLabel(label);
 }
 
+async function waitForEditableFieldOnScreen(label) {
+  const {height} = displaySize();
+  const safeBottom = height - 110;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const nodes = uiNodes();
+    lastUiLabels = safeUiLabels(nodes);
+    lastUiDetails = safeUiDetails(nodes);
+    lastEditableStates = safeEditableStates(nodes);
+    const field = findNode(nodes, label, { editable: true });
+    const bounds = nodeBounds(field);
+    if (bounds && bounds.top >= 0 && bounds.bottom <= safeBottom && bounds.bottom > bounds.top) return field;
+    scrollDownOnePage();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw new TestFailure("android-editable-field-not-visible");
+}
+
 async function waitForFieldValue(label, expected) {
   const deadline = Date.now() + 5000;
   const isSensitive = /contraseña|password/i.test(label);
@@ -338,14 +355,14 @@ async function waitForFieldValue(label, expected) {
 }
 
 async function typeField(label, value) {
-  tapNode(await waitForNode(label, { editable: true, scroll: true }));
+  tapNode(await waitForEditableFieldOnScreen(label));
   adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
   await waitForFieldValue(label, value);
 }
 
 async function replaceField(label, previousLength, value) {
-  tapNode(await waitForNode(label, { editable: true, scroll: true }));
+  tapNode(await waitForEditableFieldOnScreen(label));
   adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
   if (value) adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
