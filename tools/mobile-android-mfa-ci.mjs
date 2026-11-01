@@ -322,11 +322,26 @@ async function tapLabel(label) {
   await tapVisibleLabel(label);
 }
 
+async function waitForFieldValue(label, expected) {
+  const deadline = Date.now() + 5000;
+  const isSensitive = /contraseña|password/i.test(label);
+  while (Date.now() < deadline) {
+    const field = findNode(uiNodes(), label, { editable: true });
+    const actual = field?.text || "";
+    const matches = isSensitive
+      ? (expected ? Boolean(actual) : !actual)
+      : actual === expected;
+    if (matches) return;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new TestFailure("android-field-value-not-confirmed");
+}
+
 async function typeField(label, value) {
   tapNode(await waitForNode(label, { editable: true, scroll: true }));
   adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await waitForFieldValue(label, value);
 }
 
 async function replaceField(label, previousLength, value) {
@@ -334,7 +349,7 @@ async function replaceField(label, previousLength, value) {
   adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
   if (value) adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await waitForFieldValue(label, value);
 }
 
 async function ensureOrganizationTermsAccepted() {
