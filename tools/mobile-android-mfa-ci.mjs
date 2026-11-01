@@ -346,8 +346,9 @@ async function waitForFieldValue(label, expected) {
   while (Date.now() < deadline) {
     const field = findNode(uiNodes(), label, { editable: true });
     const actual = field?.text || "";
+    const masked = isSensitive && actual.length > 0 && [...actual].every((character) => ["\u2022", "\u25cf", "*"].includes(character));
     const matches = isSensitive
-      ? (expected ? actual.length === expected.length : actual.length === 0)
+      ? (expected ? actual.length === expected.length && (masked || actual === expected) : actual.length === 0)
       : actual === expected;
     if (matches) return;
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -365,6 +366,16 @@ async function typeField(label, value) {
 async function replaceField(label, previousLength, value) {
   tapNode(await waitForEditableFieldOnScreen(label));
   adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
+  if (value) adb(["shell", "input", "text", value]);
+  adb(["shell", "input", "keyevent", "111"]);
+  await waitForFieldValue(label, value);
+}
+
+async function replaceFieldWithCurrentValue(label, value) {
+  const field = await waitForEditableFieldOnScreen(label);
+  const previousLength = (field.text || "").length;
+  tapNode(field);
+  if (previousLength) adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
   if (value) adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
   await waitForFieldValue(label, value);
@@ -724,8 +735,8 @@ async function run() {
   await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
   await waitForNode("\u2611");
 
-  await typeField("Correo electr\u00f3nico", email);
-  await typeField("Contrase\u00f1a", password);
+  await replaceFieldWithCurrentValue("Correo electr\u00f3nico", email);
+  await replaceFieldWithCurrentValue("Contrase\u00f1a", password);
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
