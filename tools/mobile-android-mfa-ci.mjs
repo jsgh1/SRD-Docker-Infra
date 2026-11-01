@@ -378,9 +378,15 @@ async function ensureOrganizationTermsAccepted() {
 
 async function verifyEmptyLoginForm(fixtureUserId) {
   stage("reject-empty-login-fields");
-  adb(["shell", "am", "force-stop", androidPackage]);
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  const clearResult = adb(["shell", "pm", "clear", androidPackage]);
+  assert(/success/i.test(clearResult), "android-empty-form-state-clear-failed");
   launchQaApp();
+  await waitForNode("Código de junta", { editable: true });
+  await typeField("Código de junta", organizationCode);
+  await tapLabel("Continuar");
+  await waitForNode("Junta de prueba A");
+  await tapLabel("Acepto los términos vigentes de mi junta");
+  await waitForNode("\u2611");
   const loginState = await waitForAuthUiState();
   assert(loginState === "login-required", "empty-login-form-did-not-start-anonymous");
   await waitForEditableFieldOnScreen("Correo electr\u00f3nico");
