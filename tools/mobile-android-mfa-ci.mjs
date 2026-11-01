@@ -369,17 +369,26 @@ async function replaceField(label, previousLength, value) {
   await waitForFieldValue(label, value);
 }
 
+async function clearField(label) {
+  tapNode(await waitForEditableFieldOnScreen(label));
+  // The UI may normalize or mask a password, so the fixture string length is
+  // not a reliable count of characters currently held by the native input.
+  adb(["shell", "input", "keyevent", "123", ...Array(128).fill("67")]);
+  adb(["shell", "input", "keyevent", "111"]);
+  await waitForFieldValue(label, "");
+}
+
 async function ensureOrganizationTermsAccepted() {
   if (findNode(uiNodes(), "\u2611")) return;
   await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
   await waitForNode("\u2611");
 }
 
-async function verifyEmptyLoginForm(fixtureUserId, previousEmailLength, previousPasswordLength) {
+async function verifyEmptyLoginForm(fixtureUserId, previousEmailLength) {
   stage("reject-empty-login-fields");
   await ensureOrganizationTermsAccepted();
   await replaceField("Correo electr\u00f3nico", previousEmailLength, "");
-  await replaceField("Contrase\u00f1a", previousPasswordLength, "");
+  await clearField("Contrase\u00f1a");
   await tapLabel("Ingresar");
   await waitForNode("Ingresa correo y contrase\u00f1a.");
   assert(authUiState(uiNodes()) === "login-required", "empty-login-left-login-screen");
@@ -800,7 +809,7 @@ async function run() {
     passCase();
 
     beginCase("Expo SDK 58 keeps empty login credentials on the login form");
-    await verifyEmptyLoginForm(mobileUserId, email.length, password.length + 1);
+    await verifyEmptyLoginForm(mobileUserId, email.length);
 
     result.passed = true;
     result.message = "";
@@ -1039,7 +1048,7 @@ async function run() {
   passCase();
 
   beginCase("Android form validation rejects empty credentials");
-  await verifyEmptyLoginForm(registrarUserId, missingEmail.length, password.length);
+  await verifyEmptyLoginForm(registrarUserId, missingEmail.length);
 
   result.passed = true;
   result.message = "";
