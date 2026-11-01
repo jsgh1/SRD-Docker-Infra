@@ -849,7 +849,7 @@ async function run() {
     passCase();
 
     beginCase("Expo SDK 58 keeps empty login credentials on the login form");
-    await verifyEmptyLoginForm(mobileUserId);
+    await verifyEmptyLoginForm(mobileUserId, organizationCode);
 
     result.passed = true;
     result.message = "";
