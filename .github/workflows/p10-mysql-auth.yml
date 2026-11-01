@@ -11,6 +11,7 @@ on:
       - 'tools/create-fixtures.php'
       - 'tools/assert-fixture-session-state.php'
       - 'tools/revoke-fixture-mobile-session.php'
+      - 'tools/manage-fixture-mobile-challenge.php'
       - 'tools/mobile-android-mfa-ci.mjs'
       - 'tools/run-p14-android-acceptance.sh'
       - 'tools/assemble-workspace.mjs'
@@ -253,6 +254,7 @@ jobs:
           node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
           compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
           compose cp assembled/tools/revoke-fixture-mobile-session.php identity:/tmp/srd-p14-revoke-mobile-session.php
+          compose cp assembled/tools/manage-fixture-mobile-challenge.php identity:/tmp/srd-p14-mobile-challenge.php
 
       - name: Verify Android QA runner capacity and KVM
         shell: bash

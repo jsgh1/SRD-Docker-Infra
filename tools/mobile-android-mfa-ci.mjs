@@ -30,6 +30,10 @@ const sessionObservations = {
   afterServerRevocation: "not-run",
   afterUiLogout: "not-run",
   afterLogoutForceStop: "not-run",
+  expoAfterBackground: "not-run",
+  expoAfterForceStop: "not-run",
+  expoAfterServerRevocation: "not-run",
+  expoAfterLogoutForceStop: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -361,6 +365,14 @@ async function waitForEnabledLabel(label, timeoutMs = 30000) {
   throw new TestFailure("android-control-did-not-become-enabled");
 }
 
+async function waitWithMemorySampling(durationMs) {
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    sampleAvailableMemory();
+    await new Promise((resolve) => setTimeout(resolve, Math.min(1000, deadline - Date.now())));
+  }
+}
+
 function beginCase(name) {
   activeCase = name;
 }
@@ -402,6 +414,33 @@ function revokeSyntheticActiveSession(fixtureUserId) {
   } catch {
     throw new TestFailure("synthetic-session-revocation-failed");
   }
+}
+
+function manageSyntheticLoginChallenge(action, fixtureUserId, challengeId = "") {
+  const project = process.env.SRD_COMPOSE_PROJECT;
+  assert(Boolean(project), "qa-compose-project-unavailable-for-challenge-fixture");
+  try {
+    return execFileSync("docker", [
+      "compose", "--project-name", project,
+      "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
+      "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-mobile-challenge.php",
+      action, fixtureUserId, challengeId,
+    ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 }).trim();
+  } catch {
+    throw new TestFailure("synthetic-login-challenge-fixture-failed");
+  }
+}
+
+function expireSyntheticPendingLoginChallenge(fixtureUserId) {
+  const output = manageSyntheticLoginChallenge("expire", fixtureUserId);
+  const challengeId = output.match(/^[0-9a-f-]{36}$/i)?.[0];
+  assert(Boolean(challengeId), "synthetic-pending-login-challenge-unavailable");
+  return challengeId;
+}
+
+function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
+  manageSyntheticLoginChallenge("assert-consumed", fixtureUserId, challengeId);
 }
 
 function xmlEscape(value) {
@@ -558,11 +597,63 @@ async function run() {
     assert(sessionObservations.viewerRegisterAction === "not-visible", "expo-viewer-register-action-visible");
     passCase();
 
-    beginCase("Expo SDK 58 logout revokes the synthetic session");
+    beginCase("Expo SDK 58 restores its authenticated session after background and process death");
+    stage("expo-background-and-resume-session-observation");
+    adb(["shell", "input", "keyevent", "KEYCODE_HOME"]);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    launchQaApp();
+    sessionObservations.expoAfterBackground = await waitForAuthUiState();
+    assert(sessionObservations.expoAfterBackground === "authenticated-home", "expo-session-not-restored-after-background");
+
+    stage("expo-force-stop-and-relaunch-session-observation");
+    adb(["shell", "am", "force-stop", androidPackage]);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    launchQaApp();
+    sessionObservations.expoAfterForceStop = await waitForAuthUiState();
+    assert(sessionObservations.expoAfterForceStop === "authenticated-home", "expo-session-not-restored-after-force-stop");
+    assertSyntheticActiveSessions(mobileUserId, 1);
+    passCase();
+
+    beginCase("Expo SDK 58 rejects a persisted session revoked by the server");
+    stage("expo-revoke-active-synthetic-session-on-server");
+    revokeSyntheticActiveSession(mobileUserId);
+    assertSyntheticActiveSessions(mobileUserId, 0);
+    stage("expo-verify-server-revocation-after-process-restart");
+    adb(["shell", "am", "force-stop", androidPackage]);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    launchQaApp();
+    sessionObservations.expoAfterServerRevocation = await waitForAuthUiState();
+    assert(["login-required", "organization-selection"].includes(sessionObservations.expoAfterServerRevocation), "expo-server-revoked-session-restored");
+    assertSyntheticActiveSessions(mobileUserId, 0);
+    passCase();
+
+    beginCase("Expo SDK 58 reauthenticates after server revocation with one new session");
+    stage("expo-reauthenticate-after-server-revocation");
+    const beforeExpoReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
+    await ensureOrganizationTermsAccepted();
+    await replaceField("Correo electr\u00f3nico", email.length, email);
+    await replaceField("Contrase\u00f1a", password.length + 1, password);
+    await tapLabel("Ingresar");
+    await waitForNode("Revisa tu correo");
+    const expoReauthenticationCode = await waitForMfaCode(email, beforeExpoReauthentication);
+    await typeField("C\u00f3digo de verificaci\u00f3n", expoReauthenticationCode);
+    await tapLabel("Verificar y entrar");
+    await waitForNode("Hola, Prueba Android");
+    assertSyntheticActiveSessions(mobileUserId, 1);
+    passCase();
+
+    beginCase("Expo SDK 58 logout revokes its session across process restart");
     stage("logout-from-expo-ui");
     await tapLabel("Cerrar sesi\u00f3n");
     sessionObservations.afterUiLogout = await waitForAuthUiState();
     assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "expo-logout-did-not-return-to-anonymous-ui");
+    assertSyntheticActiveSessions(mobileUserId, 0);
+    stage("expo-verify-logout-after-process-restart");
+    adb(["shell", "am", "force-stop", androidPackage]);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    launchQaApp();
+    sessionObservations.expoAfterLogoutForceStop = await waitForAuthUiState();
+    assert(["login-required", "organization-selection"].includes(sessionObservations.expoAfterLogoutForceStop), "expo-session-survived-logout-and-restart");
     assertSyntheticActiveSessions(mobileUserId, 0);
     passCase();
 
@@ -575,9 +666,40 @@ async function run() {
     return;
   }
 
+  beginCase("Android rejects an expired real MFA challenge without creating a session");
+  stage("expire-only-the-pending-synthetic-login-challenge");
+  const expiredChallengeId = expireSyntheticPendingLoginChallenge(mobileUserId);
+  stage("submit-the-expired-mfa-code-through-android");
+  await typeField("C\u00f3digo de verificaci\u00f3n", code);
+  await tapLabel("Verificar y entrar");
+  await waitForNode("Revisa los datos del formulario.");
+  assert(authUiState(uiNodes()) === "mfa-challenge", "expired-mfa-left-challenge-screen-unverified");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
+  beginCase("Android respects the MFA resend cooldown and receives a replacement challenge");
+  stage("observe-server-defined-mfa-resend-cooldown");
+  await waitWithMemorySampling(30000);
+  const resendNodesAfterThirtySeconds = uiNodes();
+  assert(findNode(resendNodesAfterThirtySeconds, "Reenviar c\u00f3digo")?.enabled === "false", "mfa-resend-enabled-before-cooldown");
+  await waitWithMemorySampling(31000);
+  await waitForEnabledLabel("Reenviar c\u00f3digo", 10000);
+  const messagesBeforeResend = new Set((await getMailpitMessages()).map((item) => item.ID));
+  stage("request-server-approved-mfa-resend-from-android");
+  await tapLabel("Reenviar c\u00f3digo");
+  await waitForNode("Enviamos un nuevo c\u00f3digo. El anterior ya no funciona.");
+  const replacementCode = await waitForMfaCode(email, messagesBeforeResend);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const resendMessages = (await getMailpitMessages()).filter((item) => !messagesBeforeResend.has(item.ID)
+    && item.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()));
+  assert(resendMessages.length === 1, "mfa-resend-created-duplicate-messages");
+  assertSyntheticLoginChallengeConsumed(mobileUserId, expiredChallengeId);
+  assertSyntheticActiveSessions(mobileUserId, 0);
+  passCase();
+
   beginCase("Android rejects an incorrect MFA code and leaves the fixture session anonymous");
   stage("reject-incorrect-mfa-code");
-  const wrongCode = `${code[0] === "9" ? "0" : String(Number(code[0]) + 1)}${code.slice(1)}`;
+  const wrongCode = `${replacementCode[0] === "9" ? "0" : String(Number(replacementCode[0]) + 1)}${replacementCode.slice(1)}`;
   await typeField("C\u00f3digo de verificaci\u00f3n", wrongCode);
   await tapLabel("Verificar y entrar");
   await waitForNode("Revisa los datos del formulario.");
@@ -588,7 +710,7 @@ async function run() {
   passCase();
 
   stage("enter-valid-mfa-code");
-  await replaceField("C\u00f3digo de verificaci\u00f3n", 6, code);
+  await replaceField("C\u00f3digo de verificaci\u00f3n", 6, replacementCode);
   stage("submit-mfa-code");
   await tapLabel("Verificar y entrar");
   stage("wait-for-authenticated-home");
