@@ -543,7 +543,7 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
     await new Promise((resolve) => setTimeout(resolve, 1000));
     stage("repeat-people-search-from-list-while-offline");
     await tapLabel("Buscar");
-    await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.");
+    await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.", {scroll: true});
     assertSyntheticActiveSessions(fixtureUserId, 1);
   } catch (error) {
     probeError = error;
