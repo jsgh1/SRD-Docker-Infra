@@ -134,8 +134,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C sources/SRD-Backend rev-parse HEAD)" = '4937742c3d7cc52c7d0574f14bcfc28d7d332e98'
-          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'eebe674b95cf1710137c780a8b690882da323957'
-          test "$(git -C sources/SRD-Frontend-Expo rev-parse HEAD)" = '6695e82b4df568f8b144cb010bba8da740123394'
+          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'af4ccae39fe5fb5a5b344d6141676909003d0d5e'
+          test "$(git -C sources/SRD-Frontend-Expo rev-parse HEAD)" = 'af4ccae39fe5fb5a5b344d6141676909003d0d5e'
           test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33'
           test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
           args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
