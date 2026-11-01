@@ -25,6 +25,7 @@ function requestThroughProxy(port, { target, body = "", method = body ? "POST" :
     const request = http.request({
       hostname: "127.0.0.1",
       port,
+      agent: false,
       method,
       path: target,
       headers: { host: "10.0.2.2:8888", "content-type": "application/json", ...headers },
@@ -105,4 +106,43 @@ test("P20 Android reverse proxy accepts only the emulator-to-proxy QA origin", (
   assert.equal(isAllowedQaTarget(new URL("https://10.0.2.2:8888/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:443/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("https://srd-jsgh1.duckdns.org/api/v1/me")), false);
+});
+
+test("P20 Android proxy assigns unique sequence numbers to concurrent exchanges", async () => {
+  let upstreamRequests = 0;
+  const upstream = http.createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      upstreamRequests += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      setTimeout(() => response.end(JSON.stringify({ ok: true })), 100);
+    });
+  });
+  const upstreamPort = await listen(upstream);
+  const tracePath = path.join(os.tmpdir(), `srd-p20-concurrent-${process.pid}-${Date.now()}.jsonl`);
+  const proxy = await startSanitizedAndroidProxy({ tracePath, upstream: `http://127.0.0.1:${upstreamPort}` });
+  try {
+    const outcomes = await Promise.allSettled([
+      requestThroughProxy(proxy.port, { target: "/api/v1/me?request=first" }),
+      requestThroughProxy(proxy.port, { target: "/api/v1/me?request=second" }),
+    ]);
+    assert.equal(upstreamRequests, 2, JSON.stringify(proxy.events));
+    assert.deepEqual(outcomes.map((outcome) => outcome.status), ["fulfilled", "fulfilled"], JSON.stringify({ events: proxy.events, upstreamRequests }));
+    const results = outcomes.map((outcome) => outcome.value);
+    assert.deepEqual(results.map((result) => result.status), [200, 200]);
+
+    const exchanges = proxy.events.filter((event) => event.event === "http_exchange");
+    assert.equal(exchanges.length, 2);
+    assert.deepEqual(exchanges.map((event) => event.sequence).sort((left, right) => left - right), [1, 2]);
+    assert.equal(new Set(exchanges.map((event) => event.sequence)).size, 2);
+    const traceExchanges = fs.readFileSync(tracePath, "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.includes('"event":"http_exchange"'))
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(traceExchanges.map((event) => event.sequence).sort((left, right) => left - right), [1, 2]);
+  } finally {
+    await proxy.close();
+    await close(upstream);
+    fs.rmSync(tracePath, { force: true });
+  }
 });

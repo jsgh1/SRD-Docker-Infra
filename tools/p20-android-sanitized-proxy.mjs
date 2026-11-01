@@ -85,6 +85,7 @@ export async function startSanitizedAndroidProxy({ tracePath, port = 8888, upstr
   }
   const correlationId = randomUUID();
   const events = [];
+  let exchangeSequence = 0;
   fs.mkdirSync(path.dirname(tracePath), { recursive: true });
   fs.writeFileSync(tracePath, "", "utf8");
   const append = (event) => {
@@ -111,7 +112,9 @@ export async function startSanitizedAndroidProxy({ tracePath, port = 8888, upstr
       return;
     }
 
-    const sequence = events.filter((event) => event.event === "http_exchange").length + 1;
+    // Allocate before forwarding so overlapping requests cannot receive the
+    // same sequence while neither upstream response has completed yet.
+    const sequence = ++exchangeSequence;
     const requestChunks = [];
     let requestBytes = 0;
     let requestOversized = false;
