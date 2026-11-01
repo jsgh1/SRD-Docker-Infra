@@ -831,6 +831,9 @@ async function run() {
     passCase();
 
     beginCase("Expo SDK 58 logout revokes its session across process restart");
+    stage("return-to-home-before-expo-logout");
+    await tapLabel("Volver al resumen");
+    await waitForNode("Hola, Prueba Android");
     stage("logout-from-expo-ui");
     await tapLabel("Cerrar sesi\u00f3n");
     sessionObservations.afterUiLogout = await waitForAuthUiState();
