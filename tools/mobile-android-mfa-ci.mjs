@@ -154,7 +154,8 @@ function safeEditableStates(nodes) {
         .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
         .replace(/\b\d{6}\b/g, "[CODE]")
         .slice(0, 60);
-      return `${label}: hasText=${Boolean(node.text)} enabled=${node.enabled || "false"} focused=${node.focused || "false"}`;
+      const textLength = (node.text || "").length;
+      return `${label}: hasText=${textLength > 0} textLength=${textLength} enabled=${node.enabled || "false"} focused=${node.focused || "false"}`;
     })
     .slice(0, 12);
 }
@@ -346,7 +347,7 @@ async function waitForFieldValue(label, expected) {
     const field = findNode(uiNodes(), label, { editable: true });
     const actual = field?.text || "";
     const matches = isSensitive
-      ? (expected ? Boolean(actual) : !actual)
+      ? (expected ? actual.length === expected.length : actual.length === 0)
       : actual === expected;
     if (matches) return;
     await new Promise((resolve) => setTimeout(resolve, 150));
