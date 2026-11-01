@@ -434,6 +434,7 @@ jobs:
           path: |
             test-results/android-qa-e2e.junit.xml
             test-results/android-qa-runner-resources.txt
+            test-results/android-qa-failure.png
             test-results/android-expo-e2e.junit.xml
             test-results/android-expo-runner-resources.txt
           if-no-files-found: warn

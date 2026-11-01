@@ -21,6 +21,7 @@ let lastUiLabels = [];
 let lastUiDetails = [];
 let lastEditableStates = [];
 let freshMfaMailObserved = "not-checked";
+let failureScreenshot = "not-captured";
 const sessionObservations = {
   viewerCanConsultPeople: "not-checked",
   viewerRegisterAction: "not-checked",
@@ -74,8 +75,12 @@ function decodeXml(value) {
 }
 
 function uiNodes() {
-  adb(["shell", "uiautomator", "dump", "/sdcard/srd-window.xml"]);
-  const xml = adb(["exec-out", "cat", "/sdcard/srd-window.xml"]);
+  const dumpPath = "/sdcard/srd-window.xml";
+  adb(["shell", "rm", "-f", dumpPath]);
+  const dumpResult = adb(["shell", "uiautomator", "dump", dumpPath]);
+  assert(dumpResult.toLowerCase().includes("dumped to"), "android-ui-hierarchy-dump-unavailable");
+  const xml = adb(["exec-out", "cat", dumpPath]);
+  assert(xml.includes("<hierarchy") && xml.includes("</hierarchy>"), "android-ui-hierarchy-dump-invalid");
   return [...xml.matchAll(/<node\b([^>]*?)\/?\s*>/g)].map((match) => {
     const node = {};
     for (const attribute of match[1].matchAll(/([\w:-]+)="([^"]*)"/g)) node[attribute[1]] = decodeXml(attribute[2]);
@@ -682,9 +687,24 @@ try {
   process.exitCode = 1;
 } finally {
   if (memoryInterval) clearInterval(memoryInterval);
+  if (!result.passed && selectedSerial) {
+    try {
+      const png = execFileSync("adb", ["-s", selectedSerial, "exec-out", "screencap", "-p"], {
+        timeout: 15000, maxBuffer: 16 * 1024 * 1024,
+      });
+      if (png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+        fs.writeFileSync(path.join(path.dirname(resourcesPath), "android-qa-failure.png"), png);
+        failureScreenshot = "android-qa-failure.png";
+      } else {
+        failureScreenshot = "invalid-image-data";
+      }
+    } catch {
+      failureScreenshot = "capture-unavailable";
+    }
+  }
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nFailureScreenshot: ${failureScreenshot}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
   const sessionDiagnostics = Object.entries(sessionObservations).map(([key, value]) => `${key}: ${value}`).join("\n");
   fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${sessionDiagnostics}\n${uiDiagnostics}`);
   writeJUnit();
