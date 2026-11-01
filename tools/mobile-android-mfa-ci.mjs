@@ -993,6 +993,8 @@ async function run() {
   beginCase("Android logout revokes the active session and remains anonymous after restart");
   if (sessionObservations.afterForceStop === "authenticated-home") {
     stage("logout-from-android-ui");
+    await tapLabel("Volver al resumen");
+    await waitForNode("Hola, Prueba Android Registrador");
     await tapLabel("Cerrar sesión");
     sessionObservations.afterUiLogout = await waitForAuthUiState();
     assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "android-logout-did-not-return-to-anonymous-ui");
