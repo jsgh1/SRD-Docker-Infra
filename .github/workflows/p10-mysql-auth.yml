@@ -305,7 +305,22 @@ jobs:
           cd sources/SRD-Frontend/apps/mobile
           npm ci --no-audit --no-fund
           cd android
-          sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;27.1.12297006'
+          sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0'
+          ndk_installed=0
+          for attempt in 1 2; do
+            if sdkmanager --install 'ndk;27.1.12297006'; then
+              ndk_installed=1
+              break
+            fi
+            if [[ "${attempt}" -eq 1 ]]; then
+              echo 'NDK package download failed; retrying once after 5 seconds.' >&2
+              sleep 5
+            fi
+          done
+          if [[ "${ndk_installed}" -ne 1 ]]; then
+            echo 'Could not install the pinned NDK package after one retry.' >&2
+            exit 1
+          fi
           log_file="${RUNNER_TEMP}/srd-qa-rejects-production.log"
           set +e
           bash ./gradlew :app:tasks -PsrdQaApiOrigin=https://srd-jsgh1.duckdns.org \
