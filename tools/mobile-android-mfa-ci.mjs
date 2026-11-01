@@ -528,7 +528,12 @@ async function run() {
     freshMfaMailObserved = await observeFreshMfaMessage(email, previousIds);
     throw error;
   }
-  console.log("PASS Android QA reached the real MFA challenge");
+  const mfaNodes = uiNodes();
+  const resendControl = findNode(mfaNodes, "Reenviar código");
+  assert(resendControl?.enabled === "false", "mfa-resend-control-not-accessibly-disabled");
+  assert(!findNodeContaining(mfaNodes, "Reenviar en"), "mfa-countdown-remains-in-accessibility-tree");
+  await waitForNode("Código de verificación", {editable: true});
+  console.log("PASS Android QA reached the real MFA challenge with a stable accessible resend control");
 
   stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);

@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: eebe674b95cf1710137c780a8b690882da323957
+          ref: af4ccae39fe5fb5a5b344d6141676909003d0d5e
           path: sources/SRD-Frontend
           persist-credentials: false
 
@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: 6695e82b4df568f8b144cb010bba8da740123394
+          ref: af4ccae39fe5fb5a5b344d6141676909003d0d5e
           path: sources/SRD-Frontend-Expo
           persist-credentials: false
 
