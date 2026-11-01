@@ -27,7 +27,7 @@ function requestThroughProxy(port, { target, body = "", method = body ? "POST" :
       port,
       method,
       path: target,
-      headers: { host: "10.0.2.2:8080", "content-type": "application/json", ...headers },
+      headers: { host: "10.0.2.2:8888", "content-type": "application/json", ...headers },
     }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
@@ -60,7 +60,7 @@ test("P20 Android proxy forwards QA HTTP and writes only redacted metadata", asy
   try {
     const loginBody = JSON.stringify({ email: "android@srd-e2e.test", password: passwordValue, organization_code: "srd-e2e-a", terms_accepted: true });
     const login = await requestThroughProxy(proxy.port, {
-      target: "http://10.0.2.2:8080/api/v1/auth/login?ignored=private",
+      target: "/api/v1/auth/login?ignored=private",
       body: loginBody,
       headers: { cookie: "srd_session=opaque-client-cookie", "x-csrf-token": "opaque-csrf" },
     });
@@ -98,9 +98,11 @@ test("P20 Android proxy forwards QA HTTP and writes only redacted metadata", asy
   }
 });
 
-test("P20 Android proxy allowlist rejects production, HTTPS and alternate QA ports", () => {
-  assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:8080/api/v1/me")), true);
-  assert.equal(isAllowedQaTarget(new URL("https://10.0.2.2:8080/api/v1/me")), false);
+test("P20 Android reverse proxy accepts only the emulator-to-proxy QA origin", () => {
+  assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:8888/api/v1/me")), true);
+  assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:8888/")), false);
+  assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:8080/api/v1/me")), false);
+  assert.equal(isAllowedQaTarget(new URL("https://10.0.2.2:8888/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:443/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("https://srd-jsgh1.duckdns.org/api/v1/me")), false);
 });

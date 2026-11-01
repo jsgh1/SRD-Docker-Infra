@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-const allowedOrigin = "http://10.0.2.2:8080";
+const allowedOrigin = "http://10.0.2.2:8888";
 const safeRoutes = new Map([
   ["GET /api/v1/csrf", "csrf-bootstrap"],
   ["GET /api/v1/me", "session-read"],
@@ -16,7 +16,7 @@ const hopByHopHeaders = new Set([
 ]);
 
 export function isAllowedQaTarget(target) {
-  return target instanceof URL && target.origin === allowedOrigin;
+  return target instanceof URL && target.origin === allowedOrigin && target.pathname.startsWith("/api/v1/");
 }
 
 function normalizedRoute(method, pathname) {

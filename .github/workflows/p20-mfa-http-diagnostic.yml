@@ -384,7 +384,7 @@ jobs:
             -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
           cd ..
           bash ./gradlew :app:assembleQaDebug -PsrdEmbedDebugJs=true \
-            -PsrdQaApiOrigin=http://10.0.2.2:8080 --no-daemon --max-workers=2
+            -PsrdQaApiOrigin=http://10.0.2.2:8888 --no-daemon --max-workers=2
           apk_path='app/build/outputs/apk/qa/debug/app-qa-debug.apk'
           test -f "${apk_path}"
           "${ANDROID_HOME}/build-tools/37.0.0/aapt" dump badging "${apk_path}" | grep -Fq "package: name='com.srd.mobile.qa'"
@@ -409,7 +409,7 @@ jobs:
           SRD_ANDROID_APK: sources/SRD-Frontend/apps/mobile/android/app/build/outputs/apk/qa/debug/app-qa-debug.apk
           SRD_FIXTURE_PATH: assembled/.local/e2e-fixture.json
           SRD_GATEWAY_URL: http://127.0.0.1:8080
-          SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8080
+          SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8888
           SRD_MAILPIT_URL: http://127.0.0.1:8025
           SRD_ANDROID_JUNIT_PATH: test-results/p20-rn-mfa.junit.xml
           SRD_ANDROID_RESOURCES_PATH: test-results/p20-rn-runner-resources.txt

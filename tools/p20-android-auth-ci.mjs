@@ -28,7 +28,6 @@ let activeCase = "P20 React Native completes real Mailpit MFA";
 let stageName = "preflight";
 let serial = "";
 let proxy;
-let proxySet = false;
 let freshMfaMailObserved = false;
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
 let memorySamples = 0;
@@ -229,7 +228,7 @@ async function run() {
   failUnless(fs.existsSync(apkPath), "qa-apk-missing");
   failUnless(fs.existsSync(fixturePath), "synthetic-fixture-missing");
   failUnless(gateway.protocol === "http:" && ["127.0.0.1", "localhost"].includes(gateway.hostname), "qa-gateway-must-be-loopback");
-  failUnless(androidOrigin === "http://10.0.2.2:8080", "android-origin-not-qa-host-alias");
+  failUnless(androidOrigin === "http://10.0.2.2:8888", "android-origin-not-qa-proxy-alias");
   failUnless(mailpit.protocol === "http:" && ["127.0.0.1", "localhost"].includes(mailpit.hostname), "mailpit-must-be-loopback");
   failUnless(Number.isInteger(proxyPort) && proxyPort > 0 && proxyPort < 65536, "android-proxy-port-invalid");
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
@@ -255,11 +254,6 @@ async function run() {
   failUnless(emulators.length === 1, "expected-one-android-emulator");
   serial = emulators[0].split(/\s+/)[0];
   proxy = await startSanitizedAndroidProxy({ tracePath, port: proxyPort });
-  setStage("install-emulator-scoped-http-proxy");
-  adb(["shell", "settings", "put", "global", "http_proxy", `10.0.2.2:${proxy.port}`]);
-  proxySet = true;
-  failUnless(adb(["shell", "settings", "get", "global", "http_proxy"]) === `10.0.2.2:${proxy.port}`, "emulator-proxy-setting-not-confirmed");
-
   setStage("install-and-launch-qa-apk");
   adb(["install", "-t", apkPath]);
   adb(["shell", "monkey", "-p", androidPackage, "-c", "android.intent.category.LAUNCHER", "1"]);
@@ -310,14 +304,6 @@ try {
   result.failure = `${error instanceof DiagnosticFailure ? error.code : "unexpected-error"}:${stageName}`;
   console.error(`FAIL P20 React Native MFA: ${result.failure}`);
 } finally {
-  if (proxySet && serial) {
-    try {
-      adb(["shell", "settings", "put", "global", "http_proxy", ":0"]);
-      proxySet = false;
-    } catch {
-      // The emulator is disposable and does not persist to another runner.
-    }
-  }
   if (proxy) {
     try { await proxy.close(); } catch { /* The GitHub runner is discarded after this job. */ }
   }
@@ -344,7 +330,7 @@ try {
     freshMfaMailObserved,
     correlationId: proxy?.correlationId || null,
     proxyListeningPort: proxy?.port || null,
-    proxySettingCleared: !proxySet,
+    deviceSystemProxyModified: false,
     exchangeCount: traceEvents.filter((event) => event.event === "http_exchange").length,
     loginStatus: loginEvent?.status ?? null,
     loginHasSessionCookie: loginEvent?.requestHasSessionCookie ?? false,
@@ -358,7 +344,7 @@ try {
     containsCredentialOtpCookieOrTokenValues: false,
   };
   fs.writeFileSync(path.join(path.dirname(tracePath), "p20-rn-mfa-summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
-  fs.writeFileSync(resourcesPath, `MemorySamples: ${memorySamples}\nMinimumMemAvailableGiB: ${minMemGiB}\nSafeFloorGiB: 2.00\nFailureScreenshot: ${failureScreenshot}\nProxySettingCleared: ${summary.proxySettingCleared}\n`, "utf8");
+  fs.writeFileSync(resourcesPath, `MemorySamples: ${memorySamples}\nMinimumMemAvailableGiB: ${minMemGiB}\nSafeFloorGiB: 2.00\nFailureScreenshot: ${failureScreenshot}\nDeviceSystemProxyModified: ${summary.deviceSystemProxyModified}\n`, "utf8");
   writeJUnit();
 }
 
