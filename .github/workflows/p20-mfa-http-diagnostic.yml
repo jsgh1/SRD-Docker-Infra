@@ -8,6 +8,8 @@ on:
       - 'tools/p20-mfa-http-diagnostic.mjs'
       - 'tools/p20-mobile-auth-state.php'
       - 'tools/p20-android-auth-ci.mjs'
+      - 'tools/p20-android-fixture.mjs'
+      - 'tools/p20-android-fixture.test.mjs'
       - 'tools/p20-android-sanitized-proxy.mjs'
       - 'tools/p20-android-sanitized-proxy.test.mjs'
   workflow_dispatch:
@@ -127,7 +129,8 @@ jobs:
           node --check sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs
-          node --test sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.test.mjs
+          node --check sources/SRD-Docker-Infra/tools/p20-android-fixture.mjs
+          node --test sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.test.mjs sources/SRD-Docker-Infra/tools/p20-android-fixture.test.mjs
           php -l sources/SRD-Docker-Infra/tools/p20-mobile-auth-state.php
           args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check

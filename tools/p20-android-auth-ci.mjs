@@ -10,6 +10,7 @@ import {
   safeUiLabels,
 } from "./mobile-android-ui.mjs";
 import { startSanitizedAndroidProxy } from "./p20-android-sanitized-proxy.mjs";
+import { resolveP20OrganizationCodeA } from "./p20-android-fixture.mjs";
 
 const apkPath = path.resolve(process.env.SRD_ANDROID_APK || "");
 const fixturePath = path.resolve(process.env.SRD_FIXTURE_PATH || "");
@@ -233,9 +234,10 @@ async function run() {
   failUnless(Number.isInteger(proxyPort) && proxyPort > 0 && proxyPort < 65536, "android-proxy-port-invalid");
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
   const account = fixture.mobile_user;
+  const organizationCodeA = resolveP20OrganizationCodeA(fixture);
   failUnless(account?.email === "android@srd-e2e.test" && /^[0-9a-f-]{36}$/i.test(account.id || "")
     && typeof fixture.password === "string" && fixture.password.length >= 32
-    && typeof fixture.codeA === "string", "synthetic-viewer-fixture-invalid");
+    && typeof organizationCodeA === "string", "synthetic-viewer-fixture-invalid");
 
   setStage("host-prelogin-precondition");
   const [csrf, me, existingMessages] = await Promise.all([
@@ -264,7 +266,7 @@ async function run() {
   await waitForNode("Código de junta", { editable: true });
 
   setStage("organization-selection");
-  await typeField("Código de junta", fixture.codeA);
+  await typeField("Código de junta", organizationCodeA);
   await tapLabel("Continuar");
   await waitForNode("Junta de prueba A");
   await tapLabel("Acepto los términos vigentes de mi junta");
