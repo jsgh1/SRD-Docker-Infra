@@ -36,6 +36,7 @@ const sessionObservations = {
   expoAfterLogoutForceStop: "not-run",
   registrarRegistrationAction: "not-run",
   registrarPendingPersonCreated: "not-run",
+  networkAirplaneModeAfterCut: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -445,7 +446,25 @@ function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
   manageSyntheticLoginChallenge("assert-consumed", fixtureUserId, challengeId);
 }
 
-function setEmulatorNetworkAvailable(available) {
+async function waitForEmulatorAirplaneMode(enabled) {
+  const expected = enabled ? "1" : "0";
+  const deadline = Date.now() + 15000;
+  let stableSamples = 0;
+  let observed = "unknown";
+  while (Date.now() < deadline) {
+    observed = adb(["shell", "settings", "get", "global", "airplane_mode_on"]);
+    if (observed === expected) {
+      stableSamples += 1;
+      if (stableSamples >= 3) return observed;
+    } else {
+      stableSamples = 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new TestFailure(`emulator-airplane-mode-not-confirmed-${enabled ? "enabled" : "disabled"}-${observed}`);
+}
+
+async function setEmulatorNetworkAvailable(available) {
   if (available) {
     adb(["shell", "cmd", "connectivity", "airplane-mode", "disable"]);
     adb(["shell", "svc", "wifi", "enable"]);
@@ -453,6 +472,8 @@ function setEmulatorNetworkAvailable(available) {
     adb(["shell", "svc", "wifi", "disable"]);
     adb(["shell", "cmd", "connectivity", "airplane-mode", "enable"]);
   }
+  const airplaneMode = await waitForEmulatorAirplaneMode(!available);
+  if (!available) sessionObservations.networkAirplaneModeAfterCut = airplaneMode;
 }
 
 async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
@@ -472,8 +493,8 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
   try {
     stage("disable-emulator-wifi-and-cellular-transport");
     networkCutAttempted = true;
-    setEmulatorNetworkAvailable(false);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await setEmulatorNetworkAvailable(false);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     stage("repeat-people-search-from-list-while-offline");
     await tapLabel("Buscar");
     await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.");
@@ -484,7 +505,14 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
   } finally {
     if (networkCutAttempted) {
       stage("restore-emulator-network-in-finally");
-      setEmulatorNetworkAvailable(true);
+      try {
+        await setEmulatorNetworkAvailable(true);
+      } catch (error) {
+        if (!probeError) {
+          probeError = error;
+          probeFailureStage = currentStage;
+        }
+      }
     }
   }
   if (probeError) {
