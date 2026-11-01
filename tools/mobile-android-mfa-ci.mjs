@@ -150,11 +150,12 @@ function safeEditableStates(nodes) {
   return nodes
     .filter((node) => /EditText$/.test(node.class || ""))
     .map((node) => {
-      const label = (node["content-desc"] || node["hint"] || "field")
+      const rawLabel = node["content-desc"] || node["hint"] || "field";
+      const label = rawLabel
         .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[EMAIL]")
         .replace(/\b\d{6}\b/g, "[CODE]")
         .slice(0, 60);
-      const textLength = (node.text || "").length;
+      const textLength = editableValue(node, rawLabel).length;
       return `${label}: hasText=${textLength > 0} textLength=${textLength} enabled=${node.enabled || "false"} focused=${node.focused || "false"}`;
     })
     .slice(0, 12);
@@ -169,6 +170,15 @@ function findNode(nodes, label, { editable = false } = {}) {
 
 function findNodeContaining(nodes, label) {
   return nodes.find((node) => (node.text || node["content-desc"] || "").includes(label));
+}
+
+function editableValue(node, label = "") {
+  const value = node?.text || "";
+  const hint = node?.hint || "";
+  if (!value || (hint && value === hint)) return "";
+  if (label === "Correo electr\u00f3nico" && value === "tu@correo.com") return "";
+  if (label === "Contrase\u00f1a" && value === "Contrase\u00f1a") return "";
+  return value;
 }
 
 function authUiState(nodes) {
@@ -345,7 +355,7 @@ async function waitForFieldValue(label, expected) {
   const isSensitive = /contraseña|password/i.test(label);
   while (Date.now() < deadline) {
     const field = findNode(uiNodes(), label, { editable: true });
-    const actual = field?.text || "";
+    const actual = editableValue(field, label);
     const masked = isSensitive && actual.length > 0 && [...actual].every((character) => ["\u2022", "\u25cf", "*"].includes(character));
     const matches = isSensitive
       ? (expected ? actual.length === expected.length && (masked || actual === expected) : actual.length === 0)
@@ -373,7 +383,7 @@ async function replaceField(label, previousLength, value) {
 
 async function replaceFieldWithCurrentValue(label, value) {
   const field = await waitForEditableFieldOnScreen(label);
-  const previousLength = (field.text || "").length;
+  const previousLength = editableValue(field, label).length;
   tapNode(field);
   if (previousLength) adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
   if (value) adb(["shell", "input", "text", value]);
