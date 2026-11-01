@@ -32,8 +32,17 @@ Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
  }
  if($service==='identity' && !empty($fixture['mobile_user']['id']) && !empty($fixture['mobile_user']['email'])){
   $mobile=$fixture['mobile_user'];
-  Illuminate\Support\Facades\DB::table('users')->insertOrIgnore(['id'=>$mobile['id'],'email'=>$mobile['email'],'name'=>'Prueba Android','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'created_at'=>now(),'updated_at'=>now()]);
-  Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA'],'role'=>'viewer']);
+  $userQuery=Illuminate\Support\Facades\DB::table('users')->where('id',$mobile['id']);
+  $existingUser=$userQuery->first();
+  $userData=['email'=>$mobile['email'],'name'=>'Prueba Android','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'active'=>true,'updated_at'=>now()];
+  if($existingUser)$userQuery->update($userData);
+  else Illuminate\Support\Facades\DB::table('users')->insert($userData+['id'=>$mobile['id'],'created_at'=>now()]);
+
+  $membershipQuery=Illuminate\Support\Facades\DB::table('memberships')->where('user_id',$mobile['id'])->where('organization_id',$fixture['orgA']);
+  $existingMembership=$membershipQuery->first();
+  $membershipData=['role'=>'viewer','active'=>true,'version'=>1];
+  if($existingMembership)$membershipQuery->update($membershipData);
+  else Illuminate\Support\Facades\DB::table('memberships')->insert($membershipData+['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA']]);
  }
  if($service==='identity' && getenv('SRD_BROWSER_SPEC')==='chat-conversations-pagination.spec.mjs'){
   $password=Illuminate\Support\Facades\Hash::make($fixture['password']);
