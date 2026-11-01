@@ -36,9 +36,9 @@ const sessionObservations = {
   expoAfterLogoutForceStop: "not-run",
   registrarRegistrationAction: "not-run",
   registrarPendingPersonCreated: "not-run",
-  networkAirplaneModeAfterCut: "not-run",
-  networkWifiSettingAfterCut: "not-run",
-  networkMobileDataSettingAfterCut: "not-run",
+  networkProbeMode: "ephemeral-qa-web-unavailable",
+  networkWebStoppedForProbe: "not-run",
+  networkWebRecoveredAfterProbe: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -463,40 +463,46 @@ function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
   manageSyntheticLoginChallenge("assert-consumed", fixtureUserId, challengeId);
 }
 
-async function waitForEmulatorAirplaneMode(enabled) {
-  const expected = enabled ? "1" : "0";
-  const deadline = Date.now() + 15000;
-  let stableSamples = 0;
-  let observed = "unknown";
+function qaCompose(args) {
+  const project = process.env.SRD_COMPOSE_PROJECT;
+  assert(Boolean(project), "qa-compose-project-unavailable-for-network-probe");
+  const envFile = process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env";
+  const composeFile = process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml";
+  try {
+    return execFileSync("docker", [
+      "compose", "--project-name", project, "--env-file", envFile,
+      "-f", composeFile, ...args,
+    ], { encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024 }).trim();
+  } catch {
+    throw new TestFailure("ephemeral-qa-web-network-probe-control-failed");
+  }
+}
+
+async function waitForQaWebApi() {
+  const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
-    observed = adb(["shell", "settings", "get", "global", "airplane_mode_on"]);
-    if (observed === expected) {
-      stableSamples += 1;
-      if (stableSamples >= 3) return observed;
-    } else {
-      stableSamples = 0;
+    try {
+      const response = await fetch(new URL("/api/v1/csrf", gateway), { signal: AbortSignal.timeout(2500) });
+      if (response.status === 200) {
+        sessionObservations.networkWebRecoveredAfterProbe = "yes";
+        return;
+      }
+    } catch {
+      // The host-published web service may need a few seconds to restart.
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new TestFailure(`emulator-airplane-mode-not-confirmed-${enabled ? "enabled" : "disabled"}-${observed}`);
+  throw new TestFailure("ephemeral-qa-web-api-not-ready-after-network-probe");
 }
 
-async function setEmulatorNetworkAvailable(available) {
+async function setQaWebAvailable(available) {
   if (available) {
-    adb(["shell", "cmd", "connectivity", "airplane-mode", "disable"]);
-    adb(["shell", "svc", "wifi", "enable"]);
-    adb(["shell", "svc", "data", "enable"]);
-  } else {
-    adb(["shell", "svc", "wifi", "disable"]);
-    adb(["shell", "svc", "data", "disable"]);
-    adb(["shell", "cmd", "connectivity", "airplane-mode", "enable"]);
+    qaCompose(["start", "web"]);
+    await waitForQaWebApi();
+    return;
   }
-  const airplaneMode = await waitForEmulatorAirplaneMode(!available);
-  if (!available) {
-    sessionObservations.networkAirplaneModeAfterCut = airplaneMode;
-    sessionObservations.networkWifiSettingAfterCut = adb(["shell", "settings", "get", "global", "wifi_on"]);
-    sessionObservations.networkMobileDataSettingAfterCut = adb(["shell", "settings", "get", "global", "mobile_data"]);
-  }
+  qaCompose(["stop", "web"]);
+  sessionObservations.networkWebStoppedForProbe = "yes";
 }
 
 async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
@@ -514,10 +520,10 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
   let probeError;
   let probeFailureStage = "";
   try {
-    stage("disable-emulator-wifi-and-cellular-transport");
+    stage("stop-ephemeral-qa-web-endpoint-for-network-probe");
     networkCutAttempted = true;
-    await setEmulatorNetworkAvailable(false);
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await setQaWebAvailable(false);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     stage("repeat-people-search-from-list-while-offline");
     await tapLabel("Buscar");
     await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.");
@@ -527,9 +533,9 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
     probeFailureStage = currentStage;
   } finally {
     if (networkCutAttempted) {
-      stage("restore-emulator-network-in-finally");
+      stage("restore-ephemeral-qa-web-endpoint-in-finally");
       try {
-        await setEmulatorNetworkAvailable(true);
+        await setQaWebAvailable(true);
       } catch (error) {
         if (!probeError) {
           probeError = error;
