@@ -263,6 +263,20 @@ function scrollDownOnePage() {
   adb(["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "350"]);
 }
 
+async function scrollToTop() {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const nodes = uiNodes();
+    const scrollView = nodes.find((item) => item.class === "android.widget.ScrollView");
+    const bounds = nodeBounds(scrollView);
+    assert(bounds && bounds.right > bounds.left && bounds.bottom > bounds.top, "android-scroll-view-unavailable");
+    const x = Math.floor((bounds.left + bounds.right) / 2);
+    const startY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.3);
+    const endY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.78);
+    adb(["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "300"]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 async function tapVisibleLabel(label) {
   const {height} = displaySize();
   const safeBottom = height - 110;
@@ -838,6 +852,7 @@ async function run() {
   await waitForNode("Hola, Prueba Android");
   assertSyntheticActiveSessions(mobileUserId, 1);
   stage("verify-registrar-person-create-permission-after-reauthentication");
+  await scrollToTop();
   const registrarCreateAction = await waitForNode("Registrar persona", {contains: true, scroll: true});
   sessionObservations.registrarRegistrationAction = String(Boolean(registrarCreateAction));
   assert(sessionObservations.registrarRegistrationAction === "true", "registrar-person-create-action-not-visible");
