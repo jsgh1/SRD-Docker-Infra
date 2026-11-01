@@ -76,16 +76,36 @@ function decodeXml(value) {
 
 function uiNodes() {
   const dumpPath = "/sdcard/srd-window.xml";
-  adb(["shell", "rm", "-f", dumpPath]);
-  const dumpResult = adb(["shell", "uiautomator", "dump", dumpPath]);
-  assert(dumpResult.toLowerCase().includes("dumped to"), "android-ui-hierarchy-dump-unavailable");
-  const xml = adb(["exec-out", "cat", dumpPath]);
-  assert(xml.includes("<hierarchy") && xml.includes("</hierarchy>"), "android-ui-hierarchy-dump-invalid");
-  return [...xml.matchAll(/<node\b([^>]*?)\/?\s*>/g)].map((match) => {
-    const node = {};
-    for (const attribute of match[1].matchAll(/([\w:-]+)="([^"]*)"/g)) node[attribute[1]] = decodeXml(attribute[2]);
-    return node;
-  });
+  let lastFailure = "android-ui-hierarchy-dump-unavailable";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      adb(["shell", "rm", "-f", dumpPath]);
+      const dumpResult = adb(["shell", "uiautomator", "dump", dumpPath]);
+      if (!dumpResult.toLowerCase().includes("dumped to")) {
+        lastFailure = "android-ui-hierarchy-dump-unavailable";
+      } else {
+        const xml = adb(["exec-out", "cat", dumpPath]);
+        if (xml.includes("<hierarchy") && xml.includes("</hierarchy>")) {
+          return [...xml.matchAll(/<node\b([^>]*?)\/?\s*>/g)].map((match) => {
+            const node = {};
+            for (const attribute of match[1].matchAll(/([\w:-]+)="([^"]*)"/g)) node[attribute[1]] = decodeXml(attribute[2]);
+            return node;
+          });
+        }
+        lastFailure = "android-ui-hierarchy-dump-invalid";
+      }
+    } catch (error) {
+      lastFailure = error instanceof TestFailure ? "android-ui-hierarchy-dump-unavailable" : "android-ui-hierarchy-dump-invalid";
+    }
+    if (attempt < 2) {
+      try {
+        adb(["shell", "sleep", "1"]);
+      } catch {
+        // Retry the dump once more; a persistent transport error remains a test failure.
+      }
+    }
+  }
+  throw new TestFailure(lastFailure);
 }
 
 function safeUiLabels(nodes) {
