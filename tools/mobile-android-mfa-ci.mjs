@@ -34,6 +34,9 @@ const sessionObservations = {
   expoAfterForceStop: "not-run",
   expoAfterServerRevocation: "not-run",
   expoAfterLogoutForceStop: "not-run",
+  registrarRegistrationAction: "not-run",
+  registrarPendingPersonCreated: "not-run",
+  viewerRoleRestoredForExpo: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -443,6 +446,58 @@ function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
   manageSyntheticLoginChallenge("assert-consumed", fixtureUserId, challengeId);
 }
 
+function setSyntheticMobileRole(fixtureUserId, organizationId, role) {
+  const project = process.env.SRD_COMPOSE_PROJECT;
+  assert(Boolean(project), "qa-compose-project-unavailable-for-role-fixture");
+  assert(/^[0-9a-f-]{36}$/i.test(organizationId || ""), "synthetic-organization-fixture-invalid");
+  try {
+    execFileSync("docker", [
+      "compose", "--project-name", project,
+      "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
+      "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p15-mobile-role.php",
+      fixtureUserId, organizationId, role,
+    ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
+  } catch {
+    throw new TestFailure("synthetic-mobile-role-fixture-failed");
+  }
+}
+
+function setEmulatorNetworkAvailable(available) {
+  if (available) {
+    adb(["shell", "cmd", "connectivity", "airplane-mode", "disable"]);
+    adb(["shell", "svc", "wifi", "enable"]);
+  } else {
+    adb(["shell", "svc", "wifi", "disable"]);
+    adb(["shell", "cmd", "connectivity", "airplane-mode", "enable"]);
+  }
+}
+
+async function verifyRealNetworkRecovery(triggerLabel, fixtureUserId) {
+  let networkCutAttempted = false;
+  try {
+    stage("disable-emulator-wifi-and-cellular-transport");
+    networkCutAttempted = true;
+    setEmulatorNetworkAvailable(false);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    stage("request-protected-read-from-the-app-while-offline");
+    await tapLabel(triggerLabel);
+    await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.");
+    assertSyntheticActiveSessions(fixtureUserId, 1);
+  } finally {
+    if (networkCutAttempted) {
+      stage("restore-emulator-network-in-finally");
+      setEmulatorNetworkAvailable(true);
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  stage("retry-idempotent-people-read-after-network-restoration");
+  await tapLabel(triggerLabel);
+  await waitForNode("Personas");
+  assertSyntheticActiveSessions(fixtureUserId, 1);
+}
+
 function xmlEscape(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
@@ -636,10 +691,16 @@ async function run() {
     await tapLabel("Ingresar");
     await waitForNode("Revisa tu correo");
     const expoReauthenticationCode = await waitForMfaCode(email, beforeExpoReauthentication);
+    stage("wait-for-server-defined-expo-mfa-resend-cooldown-before-reauthentication");
+    await waitForEnabledLabel("Reenviar c\u00f3digo", 70000);
     await typeField("C\u00f3digo de verificaci\u00f3n", expoReauthenticationCode);
     await tapLabel("Verificar y entrar");
     await waitForNode("Hola, Prueba Android");
     assertSyntheticActiveSessions(mobileUserId, 1);
+    passCase();
+
+    beginCase("Expo SDK 58 reports a real network cut and recovers a safe read after restoration");
+    await verifyRealNetworkRecovery("Personas", mobileUserId);
     passCase();
 
     beginCase("Expo SDK 58 logout revokes its session across process restart");
@@ -756,8 +817,9 @@ async function run() {
   assertSyntheticActiveSessions(mobileUserId, 0);
   passCase();
 
-  beginCase("Android reauthenticates after server revocation with one new session");
+  beginCase("Android reauthenticates after server revocation as a registrar with one new session");
   stage("reauthenticate-after-server-revocation");
+  setSyntheticMobileRole(mobileUserId, fixture.orgA, "registrar");
   const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
   await ensureOrganizationTermsAccepted();
   await replaceField("Correo electr\u00f3nico", email.length, email);
@@ -775,6 +837,35 @@ async function run() {
   await tapLabel("Verificar y entrar");
   await waitForNode("Hola, Prueba Android");
   assertSyntheticActiveSessions(mobileUserId, 1);
+  sessionObservations.registrarRegistrationAction = String(Boolean(findNodeContaining(uiNodes(), "Registrar persona")));
+  assert(sessionObservations.registrarRegistrationAction === "true", "registrar-person-create-action-not-visible");
+  passCase();
+
+  beginCase("Android registrar creates and reopens a pending person through the real Gateway");
+  stage("open-registrar-person-form");
+  const syntheticDocumentNumber = `P15-${Date.now()}`;
+  await tapLabel("Registrar persona");
+  await waitForNode("N\u00famero de documento *", { editable: true, scroll: true });
+  await typeField("N\u00famero de documento *", syntheticDocumentNumber);
+  await typeField("Nombres *", "PruebaP15");
+  await typeField("Apellidos", "RegistrarAndroid");
+  await typeField("Fundamento o referencia del soporte *", "AutorizacionSinteticaP15");
+  await typeField("Finalidad de la captura *", "ValidarAltaMovilP15");
+  stage("submit-synthetic-pending-person-from-android");
+  await tapLabel("Guardar como pendiente");
+  await waitForNode("Persona registrada");
+  sessionObservations.registrarPendingPersonCreated = "true";
+  assertSyntheticActiveSessions(mobileUserId, 1);
+  await tapLabel("Ver ficha");
+  await waitForNode(syntheticDocumentNumber, { contains: true });
+  await tapLabel("Volver al registro guardado");
+  await waitForNode("Persona registrada");
+  await tapLabel("Volver al resumen");
+  await waitForNode("Hola, Prueba Android");
+  passCase();
+
+  beginCase("React Native reports a real network cut and recovers a safe read after restoration");
+  await verifyRealNetworkRecovery("Consultar personas", mobileUserId);
   passCase();
 
   beginCase("Android logout revokes the active session and remains anonymous after restart");
@@ -796,6 +887,10 @@ async function run() {
     sessionObservations.afterLogoutForceStop = "not-run-session-not-retained";
   }
   passCase();
+
+  stage("restore-synthetic-viewer-role-for-the-subsequent-expo-suite");
+  setSyntheticMobileRole(mobileUserId, fixture.orgA, "viewer");
+  sessionObservations.viewerRoleRestoredForExpo = "true";
 
   beginCase("Android rejects an incorrect password without opening MFA or creating a session");
   stage("reject-incorrect-password-after-valid-session-lifecycle");
