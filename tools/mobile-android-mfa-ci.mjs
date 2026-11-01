@@ -837,7 +837,9 @@ async function run() {
   await tapLabel("Verificar y entrar");
   await waitForNode("Hola, Prueba Android");
   assertSyntheticActiveSessions(mobileUserId, 1);
-  sessionObservations.registrarRegistrationAction = String(Boolean(findNodeContaining(uiNodes(), "Registrar persona")));
+  stage("verify-registrar-person-create-permission-after-reauthentication");
+  const registrarCreateAction = await waitForNode("Registrar persona", {contains: true, scroll: true});
+  sessionObservations.registrarRegistrationAction = String(Boolean(registrarCreateAction));
   assert(sessionObservations.registrarRegistrationAction === "true", "registrar-person-create-action-not-visible");
   passCase();
 
