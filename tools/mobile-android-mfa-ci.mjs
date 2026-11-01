@@ -802,26 +802,65 @@ async function run() {
   assertSyntheticActiveSessions(mobileUserId, 0);
   passCase();
 
-  beginCase("Android reauthenticates after server revocation as a registrar with one new session");
+  beginCase("Android reauthenticates the revoked viewer after server revocation with one new session");
   stage("reauthenticate-after-server-revocation");
   const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
   await ensureOrganizationTermsAccepted();
-  await replaceField("Correo electr\u00f3nico", email.length, registrarEmail);
-  let activeLoginEmail = registrarEmail;
+  await replaceField("Correo electr\u00f3nico", email.length, email);
   await replaceField("Contrase\u00f1a", password.length, password);
   await tapLabel("Ingresar");
   stage("wait-for-reauthentication-mfa-challenge");
   try {
     await waitForNode("Revisa tu correo");
   } catch (error) {
-    freshMfaMailObserved = await observeFreshMfaMessage(registrarEmail, beforeReauthentication);
+    freshMfaMailObserved = await observeFreshMfaMessage(email, beforeReauthentication);
     throw error;
   }
-  const reauthenticationCode = await waitForMfaCode(registrarEmail, beforeReauthentication);
+  const reauthenticationCode = await waitForMfaCode(email, beforeReauthentication);
   await typeField("C\u00f3digo de verificaci\u00f3n", reauthenticationCode);
   await tapLabel("Verificar y entrar");
   await waitForNode("Hola, Prueba Android");
+  assertSyntheticActiveSessions(mobileUserId, 1);
+  passCase();
+
+  beginCase("Android registrar account completes real MFA and receives registrar permissions");
+  stage("logout-reauthenticated-viewer-before-registrar-login");
+  await tapLabel("Cerrar sesi\u00f3n");
+  const viewerAfterLogout = await waitForAuthUiState();
+  assert(["login-required", "organization-selection"].includes(viewerAfterLogout), "viewer-logout-did-not-return-to-anonymous-ui");
+  assertSyntheticActiveSessions(mobileUserId, 0);
+
+  stage("clear-local-auth-state-before-registrar-fixture-login");
+  const clearResult = adb(["shell", "pm", "clear", androidPackage]);
+  assert(/success/i.test(clearResult), "android-local-state-clear-failed");
+  launchQaApp();
+  await waitForNode("C\u00f3digo de junta", { editable: true });
+  await typeField("C\u00f3digo de junta", organizationCode);
+  await tapLabel("Continuar");
+  await waitForNode("Junta de prueba A");
+  await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
+  await waitForNode("\u2611");
+  assertSyntheticActiveSessions(registrarUserId, 0);
+
+  const beforeRegistrarLogin = new Set((await getMailpitMessages()).map((item) => item.ID));
+  let activeLoginEmail = registrarEmail;
+  await typeField("Correo electr\u00f3nico", registrarEmail);
+  await typeField("Contrase\u00f1a", password);
+  stage("submit-registrar-login-after-clean-app-state");
+  await tapLabel("Ingresar");
+  stage("wait-for-registrar-mfa-challenge");
+  try {
+    await waitForNode("Revisa tu correo");
+  } catch (error) {
+    freshMfaMailObserved = await observeFreshMfaMessage(registrarEmail, beforeRegistrarLogin);
+    throw error;
+  }
+  const registrarLoginCode = await waitForMfaCode(registrarEmail, beforeRegistrarLogin);
+  await typeField("C\u00f3digo de verificaci\u00f3n", registrarLoginCode);
+  await tapLabel("Verificar y entrar");
+  await waitForNode("Hola, Prueba Android Registrador");
   assertSyntheticActiveSessions(registrarUserId, 1);
+
   stage("verify-registrar-person-create-permission-after-reauthentication");
   const registrarCreateAction = await waitForNode("Registrar persona", {contains: true, scroll: true});
   sessionObservations.registrarRegistrationAction = String(Boolean(registrarCreateAction));
@@ -848,7 +887,7 @@ async function run() {
   await tapLabel("Volver al registro guardado");
   await waitForNode("Persona registrada");
   await tapLabel("Volver al resumen");
-  await waitForNode("Hola, Prueba Android");
+  await waitForNode("Hola, Prueba Android Registrador");
   passCase();
 
   beginCase("React Native reports a real network cut and recovers a safe read after restoration");
