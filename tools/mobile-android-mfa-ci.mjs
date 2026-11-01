@@ -328,8 +328,15 @@ async function replaceField(label, previousLength, value) {
   await new Promise((resolve) => setTimeout(resolve, 300));
 }
 
+async function ensureOrganizationTermsAccepted() {
+  if (findNode(uiNodes(), "\u2611")) return;
+  await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
+  await waitForNode("\u2611");
+}
+
 async function verifyEmptyLoginForm(fixtureUserId, previousEmailLength, previousPasswordLength) {
   stage("reject-empty-login-fields");
+  await ensureOrganizationTermsAccepted();
   await replaceField("Correo electr\u00f3nico", previousEmailLength, "");
   await replaceField("Contrase\u00f1a", previousPasswordLength, "");
   await tapLabel("Ingresar");
@@ -630,10 +637,7 @@ async function run() {
   beginCase("Android reauthenticates after server revocation with one new session");
   stage("reauthenticate-after-server-revocation");
   const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
-  if (!findNode(uiNodes(), "\u2611")) {
-    await tapLabel("Acepto los t\u00e9rminos vigentes de mi junta");
-    await waitForNode("\u2611");
-  }
+  await ensureOrganizationTermsAccepted();
   await replaceField("Correo electr\u00f3nico", email.length, email);
   await replaceField("Contrase\u00f1a", password.length, password);
   await tapLabel("Ingresar");
@@ -673,6 +677,7 @@ async function run() {
 
   beginCase("Android rejects an incorrect password without opening MFA or creating a session");
   stage("reject-incorrect-password-after-valid-session-lifecycle");
+  await ensureOrganizationTermsAccepted();
   const beforeWrongPassword = new Set((await getMailpitMessages()).map((item) => item.ID));
   await replaceField("Correo electr\u00f3nico", email.length, email);
   await typeField("Contrase\u00f1a", `${password}x`);
