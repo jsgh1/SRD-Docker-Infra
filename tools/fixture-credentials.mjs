@@ -25,6 +25,7 @@ if (!fs.existsSync(file)) {
       ]),
     ),
     mobile_user: { id: randomUUID(), email: "android@srd-e2e.test" },
+    mobile_registrar_user: { id: randomUUID(), email: "android-registrar@srd-e2e.test" },
   };
   fs.writeFileSync(file, JSON.stringify(fixture, null, 2) + "\n", {
     flag: "wx",

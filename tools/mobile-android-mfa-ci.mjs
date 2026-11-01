@@ -36,7 +36,6 @@ const sessionObservations = {
   expoAfterLogoutForceStop: "not-run",
   registrarRegistrationAction: "not-run",
   registrarPendingPersonCreated: "not-run",
-  viewerRoleRestoredForExpo: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -263,20 +262,6 @@ function scrollDownOnePage() {
   adb(["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "350"]);
 }
 
-async function scrollToTop() {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const nodes = uiNodes();
-    const scrollView = nodes.find((item) => item.class === "android.widget.ScrollView");
-    const bounds = nodeBounds(scrollView);
-    assert(bounds && bounds.right > bounds.left && bounds.bottom > bounds.top, "android-scroll-view-unavailable");
-    const x = Math.floor((bounds.left + bounds.right) / 2);
-    const startY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.3);
-    const endY = Math.floor(bounds.top + (bounds.bottom - bounds.top) * 0.78);
-    adb(["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "300"]);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
-
 async function tapVisibleLabel(label) {
   const {height} = displaySize();
   const safeBottom = height - 110;
@@ -460,23 +445,6 @@ function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
   manageSyntheticLoginChallenge("assert-consumed", fixtureUserId, challengeId);
 }
 
-function setSyntheticMobileRole(fixtureUserId, organizationId, role) {
-  const project = process.env.SRD_COMPOSE_PROJECT;
-  assert(Boolean(project), "qa-compose-project-unavailable-for-role-fixture");
-  assert(/^[0-9a-f-]{36}$/i.test(organizationId || ""), "synthetic-organization-fixture-invalid");
-  try {
-    execFileSync("docker", [
-      "compose", "--project-name", project,
-      "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
-      "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
-      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p15-mobile-role.php",
-      fixtureUserId, organizationId, role,
-    ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
-  } catch {
-    throw new TestFailure("synthetic-mobile-role-fixture-failed");
-  }
-}
-
 function setEmulatorNetworkAvailable(available) {
   if (available) {
     adb(["shell", "cmd", "connectivity", "airplane-mode", "disable"]);
@@ -584,9 +552,12 @@ async function run() {
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
   const email = fixture.mobile_user?.email;
   const mobileUserId = fixture.mobile_user?.id;
+  const registrarEmail = fixture.mobile_registrar_user?.email;
+  const registrarUserId = fixture.mobile_registrar_user?.id;
   const password = fixture.password;
   const organizationCode = fixture.codeA || "srd-e2e-a";
   assert(email === "android@srd-e2e.test" && /^[0-9a-f-]{36}$/i.test(mobileUserId || "")
+    && registrarEmail === "android-registrar@srd-e2e.test" && /^[0-9a-f-]{36}$/i.test(registrarUserId || "")
     && typeof password === "string" && password.length >= 32, "synthetic-mobile-account-invalid");
 
   const [csrfResponse, sessionResponse, mailpitMessages] = await Promise.all([
@@ -833,26 +804,25 @@ async function run() {
 
   beginCase("Android reauthenticates after server revocation as a registrar with one new session");
   stage("reauthenticate-after-server-revocation");
-  setSyntheticMobileRole(mobileUserId, fixture.orgA, "registrar");
   const beforeReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
   await ensureOrganizationTermsAccepted();
-  await replaceField("Correo electr\u00f3nico", email.length, email);
+  await replaceField("Correo electr\u00f3nico", email.length, registrarEmail);
+  let activeLoginEmail = registrarEmail;
   await replaceField("Contrase\u00f1a", password.length, password);
   await tapLabel("Ingresar");
   stage("wait-for-reauthentication-mfa-challenge");
   try {
     await waitForNode("Revisa tu correo");
   } catch (error) {
-    freshMfaMailObserved = await observeFreshMfaMessage(email, beforeReauthentication);
+    freshMfaMailObserved = await observeFreshMfaMessage(registrarEmail, beforeReauthentication);
     throw error;
   }
-  const reauthenticationCode = await waitForMfaCode(email, beforeReauthentication);
+  const reauthenticationCode = await waitForMfaCode(registrarEmail, beforeReauthentication);
   await typeField("C\u00f3digo de verificaci\u00f3n", reauthenticationCode);
   await tapLabel("Verificar y entrar");
   await waitForNode("Hola, Prueba Android");
-  assertSyntheticActiveSessions(mobileUserId, 1);
+  assertSyntheticActiveSessions(registrarUserId, 1);
   stage("verify-registrar-person-create-permission-after-reauthentication");
-  await scrollToTop();
   const registrarCreateAction = await waitForNode("Registrar persona", {contains: true, scroll: true});
   sessionObservations.registrarRegistrationAction = String(Boolean(registrarCreateAction));
   assert(sessionObservations.registrarRegistrationAction === "true", "registrar-person-create-action-not-visible");
@@ -872,7 +842,7 @@ async function run() {
   await tapLabel("Guardar como pendiente");
   await waitForNode("Persona registrada");
   sessionObservations.registrarPendingPersonCreated = "true";
-  assertSyntheticActiveSessions(mobileUserId, 1);
+  assertSyntheticActiveSessions(registrarUserId, 1);
   await tapLabel("Ver ficha");
   await waitForNode(syntheticDocumentNumber, { contains: true });
   await tapLabel("Volver al registro guardado");
@@ -882,7 +852,7 @@ async function run() {
   passCase();
 
   beginCase("React Native reports a real network cut and recovers a safe read after restoration");
-  await verifyRealNetworkRecovery("Consultar personas", mobileUserId);
+  await verifyRealNetworkRecovery("Consultar personas", registrarUserId);
   passCase();
 
   beginCase("Android logout revokes the active session and remains anonymous after restart");
@@ -891,7 +861,7 @@ async function run() {
     await tapLabel("Cerrar sesión");
     sessionObservations.afterUiLogout = await waitForAuthUiState();
     assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "android-logout-did-not-return-to-anonymous-ui");
-    assertSyntheticActiveSessions(mobileUserId, 0);
+    assertSyntheticActiveSessions(registrarUserId, 0);
 
     stage("verify-logout-after-process-restart");
     adb(["shell", "am", "force-stop", androidPackage]);
@@ -905,38 +875,34 @@ async function run() {
   }
   passCase();
 
-  stage("restore-synthetic-viewer-role-for-the-subsequent-expo-suite");
-  setSyntheticMobileRole(mobileUserId, fixture.orgA, "viewer");
-  sessionObservations.viewerRoleRestoredForExpo = "true";
-
   beginCase("Android rejects an incorrect password without opening MFA or creating a session");
   stage("reject-incorrect-password-after-valid-session-lifecycle");
   await ensureOrganizationTermsAccepted();
   const beforeWrongPassword = new Set((await getMailpitMessages()).map((item) => item.ID));
-  await replaceField("Correo electr\u00f3nico", email.length, email);
+  await replaceField("Correo electr\u00f3nico", activeLoginEmail.length, activeLoginEmail);
   await typeField("Contrase\u00f1a", `${password}x`);
   await tapLabel("Ingresar");
   await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
   assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
-  assertSyntheticActiveSessions(mobileUserId, 0);
-  await assertNoFreshMfaMessage(email, beforeWrongPassword);
+  assertSyntheticActiveSessions(registrarUserId, 0);
+  await assertNoFreshMfaMessage(activeLoginEmail, beforeWrongPassword);
   passCase();
 
   beginCase("Android does not disclose whether an account exists");
   stage("reject-nonexistent-account");
   const beforeMissingAccount = new Set((await getMailpitMessages()).map((item) => item.ID));
   const missingEmail = "missing-account@srd-e2e.test";
-  await replaceField("Correo electr\u00f3nico", email.length, missingEmail);
+  await replaceField("Correo electr\u00f3nico", activeLoginEmail.length, missingEmail);
   await replaceField("Contrase\u00f1a", password.length + 1, password);
   await tapLabel("Ingresar");
   await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
   assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
-  assertSyntheticActiveSessions(mobileUserId, 0);
-  await assertNoFreshMfaMessage(email, beforeMissingAccount);
+  assertSyntheticActiveSessions(registrarUserId, 0);
+  await assertNoFreshMfaMessage(activeLoginEmail, beforeMissingAccount);
   passCase();
 
   beginCase("Android form validation rejects empty credentials");
-  await verifyEmptyLoginForm(mobileUserId, missingEmail.length, password.length);
+  await verifyEmptyLoginForm(registrarUserId, missingEmail.length, password.length);
 
   result.passed = true;
   result.message = "";

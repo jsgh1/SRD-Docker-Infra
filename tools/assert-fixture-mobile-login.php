@@ -21,4 +21,17 @@ $memberships=Illuminate\Support\Facades\DB::table('memberships')->where('user_id
 if($memberships->count()!==1 || $memberships[0]->organization_id!==$fixture['orgA'] || $memberships[0]->role!=='viewer'){
     throw new RuntimeException('mobile-fixture-viewer-membership-invalid');
 }
+$registrar=$fixture['mobile_registrar_user']??null;
+if(!is_array($registrar) || empty($registrar['id']) || empty($registrar['email'])){
+    throw new RuntimeException('mobile-registrar-fixture-incomplete');
+}
+$registrarUser=Illuminate\Support\Facades\DB::table('users')->where('id',$registrar['id'])->where('email',$registrar['email'])->first();
+if(!$registrarUser || !$registrarUser->active || $registrarUser->superadmin || !Illuminate\Support\Facades\Hash::check($fixture['password'],$registrarUser->password)){
+    throw new RuntimeException('mobile-registrar-fixture-account-not-authenticatable');
+}
+$registrarMemberships=Illuminate\Support\Facades\DB::table('memberships')->where('user_id',$registrar['id'])->where('active',true)->get();
+if($registrarMemberships->count()!==1 || $registrarMemberships[0]->organization_id!==$fixture['orgA'] || $registrarMemberships[0]->role!=='registrar'){
+    throw new RuntimeException('mobile-registrar-fixture-membership-invalid');
+}
+echo "PASS synthetic Android registrar fixture is active and ready; no credentials printed.\n";
 echo "PASS synthetic Android login fixture is active and ready; no credentials printed.\n";

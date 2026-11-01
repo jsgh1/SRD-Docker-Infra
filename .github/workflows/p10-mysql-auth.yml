@@ -266,7 +266,6 @@ jobs:
           compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
           compose cp assembled/tools/revoke-fixture-mobile-session.php identity:/tmp/srd-p14-revoke-mobile-session.php
           compose cp assembled/tools/manage-fixture-mobile-challenge.php identity:/tmp/srd-p14-mobile-challenge.php
-          compose cp assembled/tools/set-fixture-mobile-role.php identity:/tmp/srd-p15-mobile-role.php
 
       - name: Verify Android QA runner capacity and KVM
         shell: bash
