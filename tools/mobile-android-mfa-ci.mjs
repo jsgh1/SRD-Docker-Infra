@@ -37,6 +37,8 @@ const sessionObservations = {
   registrarRegistrationAction: "not-run",
   registrarPendingPersonCreated: "not-run",
   networkAirplaneModeAfterCut: "not-run",
+  networkWifiSettingAfterCut: "not-run",
+  networkMobileDataSettingAfterCut: "not-run",
 };
 let selectedSerial = "";
 let minimumAvailableKiB = Number.POSITIVE_INFINITY;
@@ -468,12 +470,18 @@ async function setEmulatorNetworkAvailable(available) {
   if (available) {
     adb(["shell", "cmd", "connectivity", "airplane-mode", "disable"]);
     adb(["shell", "svc", "wifi", "enable"]);
+    adb(["shell", "svc", "data", "enable"]);
   } else {
     adb(["shell", "svc", "wifi", "disable"]);
+    adb(["shell", "svc", "data", "disable"]);
     adb(["shell", "cmd", "connectivity", "airplane-mode", "enable"]);
   }
   const airplaneMode = await waitForEmulatorAirplaneMode(!available);
-  if (!available) sessionObservations.networkAirplaneModeAfterCut = airplaneMode;
+  if (!available) {
+    sessionObservations.networkAirplaneModeAfterCut = airplaneMode;
+    sessionObservations.networkWifiSettingAfterCut = adb(["shell", "settings", "get", "global", "wifi_on"]);
+    sessionObservations.networkMobileDataSettingAfterCut = adb(["shell", "settings", "get", "global", "mobile_data"]);
+  }
 }
 
 async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
