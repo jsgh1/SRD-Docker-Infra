@@ -11,7 +11,7 @@ on:
       frontend_sha:
         description: Exact Frontend revision
         required: true
-        default: 4f9a5e73c2be88fe8d7d83be3ea2fb77dd29ad75
+        default: 91fc887de887cd7abf273d4660c123849b8fa8a8
       database_sha:
         description: Exact Database revision
         required: true
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: ${{ inputs.frontend_sha || '4f9a5e73c2be88fe8d7d83be3ea2fb77dd29ad75' }}
+          ref: ${{ inputs.frontend_sha || '91fc887de887cd7abf273d4660c123849b8fa8a8' }}
           path: sources/SRD-Frontend
           persist-credentials: false
       - uses: actions/checkout@v4
