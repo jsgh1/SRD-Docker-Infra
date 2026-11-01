@@ -461,7 +461,7 @@ function assertSyntheticLoginChallengeConsumed(fixtureUserId, challengeId) {
 
 function qaCompose(args) {
   const project = process.env.SRD_COMPOSE_PROJECT;
-  assert(Boolean(project), "qa-compose-project-unavailable-for-network-probe");
+  assert(Boolean(project), "qa-compose-project-unavailable-for-endpoint-outage-probe");
   const envFile = process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env";
   const composeFile = process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml";
   try {
@@ -470,7 +470,7 @@ function qaCompose(args) {
       "-f", composeFile, ...args,
     ], { encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024 }).trim();
   } catch {
-    throw new TestFailure("ephemeral-qa-web-network-probe-control-failed");
+    throw new TestFailure("ephemeral-qa-web-endpoint-outage-control-failed");
   }
 }
 
@@ -488,7 +488,7 @@ async function waitForQaWebApi() {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new TestFailure("ephemeral-qa-web-api-not-ready-after-network-probe");
+  throw new TestFailure("ephemeral-qa-web-api-not-ready-after-endpoint-outage-probe");
 }
 
 async function setQaWebAvailable(available) {
@@ -501,26 +501,26 @@ async function setQaWebAvailable(available) {
   sessionObservations.networkWebStoppedForProbe = "yes";
 }
 
-async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
-  stage("open-people-list-before-network-cut");
+async function verifyQaWebEndpointRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
+  stage("open-people-list-before-qa-web-endpoint-outage");
   await tapLabel(openPeopleListLabel);
   await waitForNode("Busca por nombre, apellido o número de documento.");
   if (searchQuery) await typeField("Buscar personas", searchQuery);
-  stage("verify-people-read-before-network-cut");
+  stage("verify-people-read-before-qa-web-endpoint-outage");
   await tapLabel("Buscar");
   await waitForEnabledLabel("Buscar");
   await waitForNode("resultado(s)", {contains: true});
   if (searchQuery) await waitForNode("1 resultado(s)");
 
-  let networkCutAttempted = false;
+  let webEndpointStopAttempted = false;
   let probeError;
   let probeFailureStage = "";
   try {
-    stage("stop-ephemeral-qa-web-endpoint-for-network-probe");
-    networkCutAttempted = true;
+    stage("stop-ephemeral-qa-web-endpoint-for-outage-probe");
+    webEndpointStopAttempted = true;
     await setQaWebAvailable(false);
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    stage("repeat-people-search-from-list-while-offline");
+    stage("repeat-people-search-while-qa-web-endpoint-unavailable");
     await tapLabel("Buscar");
     await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.", {scroll: true});
     assertSyntheticActiveSessions(fixtureUserId, 1);
@@ -528,7 +528,7 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
     probeError = error;
     probeFailureStage = currentStage;
   } finally {
-    if (networkCutAttempted) {
+    if (webEndpointStopAttempted) {
       stage("restore-ephemeral-qa-web-endpoint-in-finally");
       try {
         await setQaWebAvailable(true);
@@ -546,7 +546,7 @@ async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, sea
   }
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
-  stage("retry-idempotent-people-read-after-network-restoration");
+  stage("retry-idempotent-people-read-after-qa-web-endpoint-restoration");
   await tapLabel("Buscar");
   await waitForEnabledLabel("Buscar");
   await waitForNode("resultado(s)", {contains: true});
@@ -771,8 +771,8 @@ async function run() {
     assertSyntheticActiveSessions(mobileUserId, 1);
     passCase();
 
-    beginCase("Expo SDK 58 reports a real network cut and recovers a safe read after restoration");
-    await verifyRealNetworkRecovery("Personas", mobileUserId);
+    beginCase("Expo SDK 58 handles QA Web endpoint outage and recovers a safe read after restoration");
+    await verifyQaWebEndpointRecovery("Personas", mobileUserId);
     passCase();
 
     beginCase("Expo SDK 58 logout revokes its session across process restart");
@@ -980,8 +980,8 @@ async function run() {
   await waitForNode("Hola, Prueba Android Registrador");
   passCase();
 
-  beginCase("React Native reports a real network cut and recovers a safe read after restoration");
-  await verifyRealNetworkRecovery("Consultar personas", registrarUserId, syntheticDocumentNumber);
+  beginCase("React Native handles QA Web endpoint outage and recovers a safe read after restoration");
+  await verifyQaWebEndpointRecovery("Consultar personas", registrarUserId, syntheticDocumentNumber);
   passCase();
 
   beginCase("Android logout revokes the active session and remains anonymous after restart");
