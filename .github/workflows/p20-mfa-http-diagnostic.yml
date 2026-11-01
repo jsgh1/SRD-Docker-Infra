@@ -1,4 +1,4 @@
-name: P20 isolated MFA HTTP diagnostic
+name: P20 isolated MFA HTTP and Android diagnostics
 
 on:
   pull_request:
@@ -7,7 +7,19 @@ on:
       - '.github/workflows/p20-mfa-http-diagnostic.yml'
       - 'tools/p20-mfa-http-diagnostic.mjs'
       - 'tools/p20-mobile-auth-state.php'
+      - 'tools/p20-android-auth-ci.mjs'
+      - 'tools/p20-android-sanitized-proxy.mjs'
+      - 'tools/p20-android-sanitized-proxy.test.mjs'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'P20 diagnostic mode'
+        required: true
+        default: http
+        type: choice
+        options:
+          - http
+          - android-rn
 
 permissions:
   contents: read
@@ -23,6 +35,7 @@ jobs:
     timeout-minutes: 40
     env:
       SRD_COMPOSE_PROJECT: srd-p20-mfa-${{ github.run_id }}-${{ github.run_attempt }}
+      P20_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event_name == 'pull_request' && 'android-rn') || 'http' }}
 
     steps:
       - name: Check out Docker Infra under review
@@ -83,7 +96,9 @@ jobs:
             echo 'The unique P20 Compose project already has volumes.' >&2
             exit 1
           fi
-          for port in 8080 8025; do
+          ports=(8080 8025)
+          if [[ "$P20_MODE" == 'android-rn' ]]; then ports+=(8888); fi
+          for port in "${ports[@]}"; do
             if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
               echo "Required QA port $port is already in use; nothing was stopped." >&2
               exit 1
@@ -110,6 +125,9 @@ jobs:
           test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33'
           test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
           node --check sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
+          node --check sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.mjs
+          node --check sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs
+          node --test sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.test.mjs
           php -l sources/SRD-Docker-Infra/tools/p20-mobile-auth-state.php
           args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
@@ -232,6 +250,7 @@ jobs:
           done
 
       - name: Reproduce the original P10 and P11 request order
+        if: env.P20_MODE == 'http'
         shell: bash
         env:
           SRD_GATEWAY_URL: http://127.0.0.1:8080
@@ -256,6 +275,7 @@ jobs:
           SRD_JUNIT_PATH=test-results/p11-mysql-tenant.junit.xml node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
 
       - name: Capture value-free authentication state after P10 and P11
+        if: env.P20_MODE == 'http'
         shell: bash
         run: |
           set -euo pipefail
@@ -274,6 +294,7 @@ jobs:
           done
 
       - name: Trace a fresh Gateway-to-Identity login and real Mailpit MFA over HTTP
+        if: env.P20_MODE == 'http'
         shell: bash
         env:
           SRD_GATEWAY_URL: http://127.0.0.1:8080
@@ -284,8 +305,121 @@ jobs:
           SRD_P20_SUMMARY_PATH: test-results/p20-mfa-http-summary.json
         run: node sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
 
-      - name: Capture value-free authentication state after the diagnostic
-        if: always()
+      - name: Verify Android runner capacity and KVM for focused MFA diagnosis
+        if: env.P20_MODE == 'android-rn'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+          disk_available_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          if (( mem_available_kb < 5 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 5 GiB available memory; refusing to launch.' >&2
+            exit 1
+          fi
+          if (( disk_available_kb < 8 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 8 GiB available disk; refusing SDK installation.' >&2
+            exit 1
+          fi
+          test -c /dev/kvm
+          runner_user="$(id -un)"
+          sudo chown "$runner_user" /dev/kvm
+          sudo chmod 0600 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          {
+            echo "P20 Android runner MemAvailableGiB: $((mem_available_kb / 1024 / 1024))"
+            echo "P20 Android runner TempDiskAvailableGiB: $((disk_available_kb / 1024 / 1024))"
+            echo 'P20 Android KVM: readable and writable by the runner user'
+          } | tee test-results/p20-android-runner-capacity.txt
+
+      - name: Set up Java 17 for the focused Android diagnostic
+        if: env.P20_MODE == 'android-rn'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            sources/SRD-Frontend/apps/mobile/android/gradle/wrapper/gradle-wrapper.properties
+            sources/SRD-Frontend/apps/mobile/android/build.gradle
+            sources/SRD-Frontend/apps/mobile/android/settings.gradle
+            sources/SRD-Frontend/apps/mobile/android/gradle.properties
+            sources/SRD-Frontend/apps/mobile/android/app/build.gradle
+
+      - name: Install Android SDK packages for the focused diagnostic
+        if: env.P20_MODE == 'android-rn'
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+
+      - name: Build the pinned React Native QA APK
+        if: env.P20_MODE == 'android-rn'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sources/SRD-Frontend/apps/mobile
+          npm ci --no-audit --no-fund
+          cd android
+          sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0'
+          ndk_installed=0
+          for attempt in 1 2; do
+            if sdkmanager --install 'ndk;27.1.12297006'; then
+              ndk_installed=1
+              break
+            fi
+            if [[ "${attempt}" -eq 1 ]]; then
+              echo 'Pinned NDK download failed; retrying once after 5 seconds.' >&2
+              sleep 5
+            fi
+          done
+          if [[ "${ndk_installed}" -ne 1 ]]; then
+            echo 'Could not install the pinned NDK package after one retry.' >&2
+            exit 1
+          fi
+          cd app
+          keytool -genkeypair -v -keystore debug.keystore -storepass android \
+            -alias androiddebugkey -keypass android \
+            -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          cd ..
+          bash ./gradlew :app:assembleQaDebug -PsrdEmbedDebugJs=true \
+            -PsrdQaApiOrigin=http://10.0.2.2:8080 --no-daemon --max-workers=2
+          apk_path='app/build/outputs/apk/qa/debug/app-qa-debug.apk'
+          test -f "${apk_path}"
+          "${ANDROID_HOME}/build-tools/37.0.0/aapt" dump badging "${apk_path}" | grep -Fq "package: name='com.srd.mobile.qa'"
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify "${apk_path}"
+
+      - name: Run focused React Native login and real MFA request trace
+        if: env.P20_MODE == 'android-rn'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          disable-spellchecker: true
+          emulator-boot-timeout: 600
+          script: node sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs
+        env:
+          SRD_ANDROID_APK: sources/SRD-Frontend/apps/mobile/android/app/build/outputs/apk/qa/debug/app-qa-debug.apk
+          SRD_FIXTURE_PATH: assembled/.local/e2e-fixture.json
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
+          SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8080
+          SRD_MAILPIT_URL: http://127.0.0.1:8025
+          SRD_ANDROID_JUNIT_PATH: test-results/p20-rn-mfa.junit.xml
+          SRD_ANDROID_RESOURCES_PATH: test-results/p20-rn-runner-resources.txt
+          SRD_ANDROID_AUTH_DIAGNOSTIC: '1'
+          SRD_ANDROID_AUTH_DIAGNOSTIC_ONLY: '1'
+          SRD_ANDROID_PROXY_TRACE_PATH: test-results/p20-android-http-trace.jsonl
+          SRD_ANDROID_PROXY_PORT: '8888'
+          SRD_ASSERT_FIXTURE_SESSIONS: '1'
+          SRD_COMPOSE_ENV_FILE: assembled/.env
+          SRD_COMPOSE_FILE: assembled/compose.yaml
+
+      - name: Capture value-free authentication state after Android diagnosis
+        if: always() && env.P20_MODE == 'android-rn'
         shell: bash
         run: |
           set -euo pipefail
@@ -295,7 +429,33 @@ jobs:
           }
           identity_container="$(compose ps -q identity 2>/dev/null || true)"
           if [[ -n "$identity_container" ]] && [[ "$(docker inspect --format '{{.State.Running}}' "$identity_container" 2>/dev/null || true)" == "true" ]]; then
-            correlation_id="$(node -e 'const fs=require("node:fs");const p="test-results/p20-mfa-http-summary.json";if(fs.existsSync(p)){const s=JSON.parse(fs.readFileSync(p,"utf8"));if(typeof s.correlationId==="string")process.stdout.write(s.correlationId)}')"
+            correlation_id="$(node -e 'const fs=require("node:fs");const p="test-results/p20-android-http-trace.jsonl";if(fs.existsSync(p)){for(const l of fs.readFileSync(p,"utf8").split(/\r?\n/)){try{const e=JSON.parse(l);if(typeof e.correlationId==="string"){process.stdout.write(e.correlationId);break}}catch{}}}')"
+            compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
+            compose cp assembled/tools/p20-mobile-auth-state.php identity:/tmp/srd-p20-mobile-auth-state.php
+            compose cp assembled/.local/e2e-fixture.json identity:/tmp/srd-p20-fixture.json
+            for account in mobile_user mobile_registrar_user; do
+              compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+                -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+                -e SRD_FIXTURE_PATH=/tmp/srd-p20-fixture.json -e "SRD_P20_CORRELATION_ID=$correlation_id" \
+                identity php /tmp/srd-p20-mobile-auth-state.php "$account" \
+                > "test-results/p20-auth-after-rn-$account.json"
+            done
+          else
+            echo 'identity-container-not-running' > test-results/p20-auth-after-rn-status.txt
+          fi
+
+      - name: Capture value-free authentication state after the diagnostic
+        if: always() && env.P20_MODE == 'http'
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          identity_container="$(compose ps -q identity 2>/dev/null || true)"
+          if [[ -n "$identity_container" ]] && [[ "$(docker inspect --format '{{.State.Running}}' "$identity_container" 2>/dev/null || true)" == "true" ]]; then
+            correlation_id="$(node -e 'const fs=require("node:fs");const tp="test-results/p20-android-http-trace.jsonl";const hp="test-results/p20-mfa-http-summary.json";if(fs.existsSync(tp)){for(const l of fs.readFileSync(tp,"utf8").split(/\r?\n/)){try{const e=JSON.parse(l);if(typeof e.correlationId==="string"){process.stdout.write(e.correlationId);break}}catch{}}}else if(fs.existsSync(hp)){const s=JSON.parse(fs.readFileSync(hp,"utf8"));if(typeof s.correlationId==="string")process.stdout.write(s.correlationId)}')"
             compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
             compose cp assembled/tools/p20-mobile-auth-state.php identity:/tmp/srd-p20-mobile-auth-state.php
             compose cp assembled/.local/e2e-fixture.json identity:/tmp/srd-p20-fixture.json
@@ -322,6 +482,11 @@ jobs:
             test-results/p10-mysql-auth.junit.xml
             test-results/p11-mysql-tenant.junit.xml
             test-results/p20-mfa-http.junit.xml
+            test-results/p20-rn-mfa.junit.xml
+            test-results/p20-rn-runner-resources.txt
+            test-results/p20-android-http-trace.jsonl
+            test-results/p20-android-runner-capacity.txt
+            test-results/p20-rn-failure.png
             assembled/srd-provenance.json
           if-no-files-found: warn
           retention-days: 7
