@@ -376,17 +376,28 @@ async function ensureOrganizationTermsAccepted() {
   await waitForNode("\u2611");
 }
 
-async function verifyEmptyLoginForm(fixtureUserId) {
+async function verifyEmptyLoginForm(fixtureUserId, organizationCode) {
   stage("reject-empty-login-fields");
+  stage("clear-local-state-before-empty-login");
   const clearResult = adb(["shell", "pm", "clear", androidPackage]);
   assert(/success/i.test(clearResult), "android-empty-form-state-clear-failed");
   launchQaApp();
+  stage("open-join-code-after-empty-login-reset");
   await waitForNode("Código de junta", { editable: true });
+  if (isExpoClient && findNode(uiNodes(), "Dirección del servidor", {editable: true})) {
+    stage("restore-qa-gateway-origin-after-empty-login-reset");
+    await typeField("Dirección del servidor", androidOrigin);
+  }
+  stage("enter-synthetic-organization-after-empty-login-reset");
   await typeField("Código de junta", organizationCode);
+  stage("submit-synthetic-organization-after-empty-login-reset");
   await tapLabel("Continuar");
+  stage("wait-for-organization-after-empty-login-reset");
   await waitForNode("Junta de prueba A");
+  stage("accept-organization-terms-after-empty-login-reset");
   await tapLabel("Acepto los términos vigentes de mi junta");
   await waitForNode("\u2611");
+  stage("verify-empty-login-form");
   const loginState = await waitForAuthUiState();
   assert(loginState === "login-required", "empty-login-form-did-not-start-anonymous");
   await waitForEditableFieldOnScreen("Correo electr\u00f3nico");
@@ -1053,7 +1064,7 @@ async function run() {
   passCase();
 
   beginCase("Android form validation rejects empty credentials");
-  await verifyEmptyLoginForm(registrarUserId);
+  await verifyEmptyLoginForm(registrarUserId, organizationCode);
 
   result.passed = true;
   result.message = "";
