@@ -713,7 +713,7 @@ async function run() {
 
     beginCase("Expo SDK 58 completes real Gateway and Mailpit MFA and renders viewer permissions");
     stage("submit-valid-expo-mfa-code");
-    await typeField("C\u00f3digo de verificaci\u00f3n", code);
+    await replaceField("C\u00f3digo de verificaci\u00f3n", wrongExpoCode.length, code);
     await tapLabel("Verificar y entrar");
     await waitForNode("Hola, Prueba Android");
     assertSyntheticActiveSessions(mobileUserId, 1);
