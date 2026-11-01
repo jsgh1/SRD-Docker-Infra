@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: af4ccae39fe5fb5a5b344d6141676909003d0d5e
+          ref: a67dd56169d413150f2c4665e114ec11a0baf380
           path: sources/SRD-Frontend
           persist-credentials: false
 
@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: af4ccae39fe5fb5a5b344d6141676909003d0d5e
+          ref: a67dd56169d413150f2c4665e114ec11a0baf380
           path: sources/SRD-Frontend-Expo
           persist-credentials: false
 
@@ -134,8 +134,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C sources/SRD-Backend rev-parse HEAD)" = '4937742c3d7cc52c7d0574f14bcfc28d7d332e98'
-          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'af4ccae39fe5fb5a5b344d6141676909003d0d5e'
-          test "$(git -C sources/SRD-Frontend-Expo rev-parse HEAD)" = 'af4ccae39fe5fb5a5b344d6141676909003d0d5e'
+          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'a67dd56169d413150f2c4665e114ec11a0baf380'
+          test "$(git -C sources/SRD-Frontend-Expo rev-parse HEAD)" = 'a67dd56169d413150f2c4665e114ec11a0baf380'
           test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33'
           test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
           args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
