@@ -1,25 +1,20 @@
 <?php
 
 // Mutate or inspect only the disposable Android QA account's login challenge.
-if (getenv('SRD_ALLOW_MYSQL_FIXTURES') !== '1') {
-    throw new RuntimeException('Explicit local fixture permission required.');
-}
-
 $action = $argv[1] ?? '';
 $userId = $argv[2] ?? '';
 $challengeId = $argv[3] ?? '';
 if (! in_array($action, ['expire', 'assert-consumed'], true)
-    || ! preg_match('/^[0-9a-fA-F-]{36}$/', $userId)
-    || ($action === 'assert-consumed' && ! preg_match('/^[0-9a-fA-F-]{36}$/', $challengeId))) {
+    || ! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $userId)
+    || ($action === 'assert-consumed' && ! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $challengeId))) {
     throw new RuntimeException('Invalid synthetic challenge fixture request.');
 }
 
+require '/tmp/srd-fixture-safety.php';
 require '/app/services/identity/vendor/autoload.php';
 $app = require '/app/services/identity/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if (! app()->environment('local') || config('database.default') !== 'mysql') {
-    throw new RuntimeException('Only the local synthetic MySQL environment is supported.');
-}
+srdAssertBootstrappedFixtureTarget('identity');
 
 $db = Illuminate\Support\Facades\DB::connection();
 $fixtureExists = $db->table('users')->where('id', $userId)->where('email', 'android@srd-e2e.test')->exists();

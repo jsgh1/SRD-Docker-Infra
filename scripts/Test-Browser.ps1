@@ -7,6 +7,8 @@ if($Tls -and -not $Compose){throw 'La prueba TLS necesita -Compose.'}
 $env:SRD_TEST_URL=if($Tls){'https://localhost:8443'}elseif($Compose){'http://localhost:8080'}else{'http://127.0.0.1:5173'}
 $env:SRD_TEST_TLS=if($Tls){'1'}else{'0'}
 $env:SRD_MAILPIT_URL=if($Compose){'http://localhost:8025'}else{'http://127.0.0.1:8125'}
+if($Compose -and -not $env:SRD_COMPOSE_PROJECT){$env:SRD_COMPOSE_PROJECT=$env:COMPOSE_PROJECT_NAME}
+if($Compose -and -not $env:SRD_COMPOSE_PROJECT){throw 'Para pruebas Compose establece SRD_COMPOSE_PROJECT con el proyecto QA aislado.'}
 $SrdRunDirectory=Join-Path $SrdRoot ('.local/browser-runs/'+[guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $SrdRunDirectory -Force | Out-Null
 $SrdAllSpecs=@(Get-ChildItem -LiteralPath (Join-Path $SrdRoot 'tools/browser-tests') -Filter '*.spec.mjs' -File | Sort-Object Name | Select-Object -ExpandProperty Name)
@@ -44,6 +46,7 @@ try {
             & "$PSScriptRoot/Seed-ComposeTests.ps1" -FixturePath $SrdBrowserFixture
         } else {
             $env:SRD_FIXTURE_PATH=$SrdBrowserFixture
+            $env:SRD_ALLOW_SQLITE_FIXTURES='1'
             $SrdServices=@('configuration','identity')
             if($SrdSpec -eq 'calendar-delivery-retry.spec.mjs'){$SrdServices+='calendar'}
             if($SrdSpec -eq 'audit-export.spec.mjs'){$SrdServices+='audit'}
@@ -64,5 +67,7 @@ try {
     Remove-Item Env:SRD_BROWSER_OUTPUT -ErrorAction SilentlyContinue
     Remove-Item Env:SRD_BROWSER_SPEC -ErrorAction SilentlyContinue
     Remove-Item Env:SRD_TEST_TLS -ErrorAction SilentlyContinue
+    Remove-Item Env:SRD_ALLOW_SQLITE_FIXTURES -ErrorAction SilentlyContinue
+    Remove-Item Env:SRD_FIXTURE_PATH -ErrorAction SilentlyContinue
 }
 if($SrdFailed){throw 'Fallaron pruebas de navegador. Revisar .local/browser-results.json y .local/browser-runs.'}

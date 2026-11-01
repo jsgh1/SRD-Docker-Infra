@@ -1,21 +1,16 @@
 <?php
 
 // Revoke only the active session belonging to the disposable Android CI account.
-if (getenv('SRD_ALLOW_MYSQL_FIXTURES') !== '1') {
-    throw new RuntimeException('Explicit local fixture permission required.');
-}
-
 $userId = $argv[1] ?? '';
-if (! preg_match('/^[0-9a-fA-F-]{36}$/', $userId)) {
+if (! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $userId)) {
     throw new RuntimeException('Invalid synthetic user ID.');
 }
 
+require '/tmp/srd-fixture-safety.php';
 require '/app/services/identity/vendor/autoload.php';
 $app = require '/app/services/identity/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if (! app()->environment('local') || config('database.default') !== 'mysql') {
-    throw new RuntimeException('Only the local synthetic MySQL environment is supported.');
-}
+srdAssertBootstrappedFixtureTarget('identity');
 
 $db = Illuminate\Support\Facades\DB::table('users')->where('id', $userId)->where('email', 'android@srd-e2e.test')->exists();
 if (! $db) {

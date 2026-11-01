@@ -9,7 +9,10 @@ on:
       - 'tools/mysql-tenant-ci.mjs'
       - 'tools/fixture-credentials.mjs'
       - 'tools/create-fixtures.php'
+      - 'tools/fixture-safety.php'
+      - 'tools/fixture-safety.test.php'
       - 'tools/assert-fixture-session-state.php'
+      - 'tools/assert-fixture-mobile-login.php'
       - 'tools/revoke-fixture-mobile-session.php'
       - 'tools/manage-fixture-mobile-challenge.php'
       - 'tools/set-fixture-mobile-role.php'
@@ -17,6 +20,9 @@ on:
       - 'tools/mobile-android-ui.mjs'
       - 'tools/mobile-android-ui.test.mjs'
       - 'tools/run-p14-android-acceptance.sh'
+      - 'tools/browser-tests/chat-session-expiry.spec.mjs'
+      - 'scripts/Seed-ComposeTests.ps1'
+      - 'scripts/Test-Browser.ps1'
       - 'tools/assemble-workspace.mjs'
       - 'compose.yaml'
       - 'docker/php.Dockerfile'
@@ -42,8 +48,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test Android UI parsing, placeholders and redaction without an emulator
-        run: node --test tools/mobile-android-ui.test.mjs
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+      - name: Test Android harness and fixture target guards without Docker
+        run: |
+          node --test tools/mobile-android-ui.test.mjs
+          php -l tools/fixture-safety.php
+          php -l tools/fixture-safety.test.php
+          php tools/fixture-safety.test.php
 
   mysql-auth-integration:
     name: Real MySQL, SMTP MFA, Android QA and tenant boundary
@@ -256,30 +269,33 @@ jobs:
               -f assembled/compose.yaml "$@"
           }
           fixture_target=/tmp/srd-p10-fixture.json
+          compose cp assembled/tools/fixture-safety.php configuration:/tmp/srd-fixture-safety.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
           compose cp assembled/tools/create-fixtures.php configuration:/tmp/srd-p10-fixtures.php
           compose cp assembled/.local/e2e-fixture.json "configuration:$fixture_target"
           compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
-          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e "SRD_FIXTURE_PATH=$fixture_target" configuration php /tmp/srd-p10-fixtures.php configuration
           compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p10-fixtures.php
-          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e "SRD_FIXTURE_PATH=$fixture_target" -e SRD_BROWSER_SPEC=chat-switch-organization.spec.mjs \
             identity php /tmp/srd-p10-fixtures.php identity
-          compose exec -T --user 0 configuration rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
+          compose exec -T --user 0 configuration rm -f /tmp/srd-p10-fixtures.php "$fixture_target" /tmp/srd-fixture-safety.php
           node sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs assembled/.local/e2e-fixture.json
-          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e SRD_P11_TENANT_RECORDS=1 -e "SRD_FIXTURE_PATH=$fixture_target" \
             identity php /tmp/srd-p10-fixtures.php identity
-          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target"
+          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target" /tmp/srd-fixture-safety.php
           node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
           compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p15-mobile-fixtures.php
           compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
-          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e "SRD_FIXTURE_PATH=$fixture_target" identity php /tmp/srd-p15-mobile-fixtures.php identity
           compose cp assembled/tools/assert-fixture-mobile-login.php identity:/tmp/srd-p15-mobile-login-check.php
-          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 \
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e "SRD_FIXTURE_PATH=$fixture_target" identity php /tmp/srd-p15-mobile-login-check.php
-          compose exec -T --user 0 identity rm -f /tmp/srd-p15-mobile-fixtures.php /tmp/srd-p15-mobile-login-check.php "$fixture_target"
+          compose exec -T --user 0 identity rm -f /tmp/srd-p15-mobile-fixtures.php /tmp/srd-p15-mobile-login-check.php "$fixture_target" /tmp/srd-fixture-safety.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
           compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
           compose cp assembled/tools/revoke-fixture-mobile-session.php identity:/tmp/srd-p14-revoke-mobile-session.php
           compose cp assembled/tools/manage-fixture-mobile-challenge.php identity:/tmp/srd-p14-mobile-challenge.php

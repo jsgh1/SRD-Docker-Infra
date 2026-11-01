@@ -408,7 +408,7 @@ function assertSyntheticActiveSessions(fixtureUserId, expected) {
       "compose", "--project-name", project,
       "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
       "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
-      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-session-state.php",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "-e", `SRD_COMPOSE_PROJECT=${project}`, "identity", "php", "/tmp/srd-p14-session-state.php",
       fixtureUserId, String(expected),
     ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
   } catch {
@@ -424,7 +424,7 @@ function revokeSyntheticActiveSession(fixtureUserId) {
       "compose", "--project-name", project,
       "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
       "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
-      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-revoke-mobile-session.php",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "-e", `SRD_COMPOSE_PROJECT=${project}`, "identity", "php", "/tmp/srd-p14-revoke-mobile-session.php",
       fixtureUserId,
     ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 });
   } catch {
@@ -440,7 +440,7 @@ function manageSyntheticLoginChallenge(action, fixtureUserId, challengeId = "") 
       "compose", "--project-name", project,
       "--env-file", process.env.SRD_COMPOSE_ENV_FILE || "assembled/.env",
       "-f", process.env.SRD_COMPOSE_FILE || "assembled/compose.yaml",
-      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "identity", "php", "/tmp/srd-p14-mobile-challenge.php",
+      "exec", "-T", "-e", "SRD_ALLOW_MYSQL_FIXTURES=1", "-e", `SRD_COMPOSE_PROJECT=${project}`, "identity", "php", "/tmp/srd-p14-mobile-challenge.php",
       action, fixtureUserId, challengeId,
     ], { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 }).trim();
   } catch {

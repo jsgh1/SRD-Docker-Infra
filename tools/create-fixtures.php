@@ -2,10 +2,13 @@
 // Synthetic local fixtures only. No input document or ZIP data is used.
 $root=getenv('SRD_ROOT') ?: dirname(__DIR__);$service=$argv[1]??'';
 if(!in_array($service,['identity','configuration','calendar','audit'],true))exit(1);
+$safetyPath=getenv('SRD_FIXTURE_SAFETY_PATH') ?: "$root/tools/fixture-safety.php";
+if(!is_file($safetyPath))throw new RuntimeException('Fixture safety policy is unavailable.');
+require $safetyPath;
 require "$root/services/$service/vendor/autoload.php";
 $app=require "$root/services/$service/bootstrap/app.php";
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if(!app()->environment('local') || (config('database.default')!=='sqlite' && getenv('SRD_ALLOW_MYSQL_FIXTURES')!=='1'))throw new RuntimeException('Fixtures require an explicitly selected isolated local environment.');
+srdAssertBootstrappedFixtureTarget($service);
 $file=getenv('SRD_FIXTURE_PATH') ?: "$root/.local/e2e-fixture.json";
 if(is_file($file))$fixture=json_decode(file_get_contents($file),true);
 else {
@@ -13,6 +16,8 @@ else {
  foreach(['admin','registrar','treasurer','auditor','viewer','superadmin'] as $role)$fixture['users'][$role]=['id'=>(string)Illuminate\Support\Str::uuid(),'email'=>"$role@srd-e2e.test"];
  file_put_contents($file,json_encode($fixture,JSON_PRETTY_PRINT));
 }
+if(!is_array($fixture))throw new RuntimeException('Synthetic fixture document is invalid.');
+srdAssertSyntheticFixture($fixture);
 Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
  if($service==='configuration')foreach(['A','B']as $letter){
   $id=$fixture['org'.$letter];
