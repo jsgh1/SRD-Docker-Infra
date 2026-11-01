@@ -288,6 +288,7 @@ jobs:
           compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target" /tmp/srd-fixture-safety.php
           node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
           compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p15-mobile-fixtures.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
           compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
           compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
             -e "SRD_FIXTURE_PATH=$fixture_target" identity php /tmp/srd-p15-mobile-fixtures.php identity
