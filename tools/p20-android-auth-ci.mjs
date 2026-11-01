@@ -10,21 +10,23 @@ import {
   safeUiLabels,
 } from "./mobile-android-ui.mjs";
 import { startSanitizedAndroidProxy } from "./p20-android-sanitized-proxy.mjs";
+import { resolveP20AndroidProfile } from "./p20-android-client-profile.mjs";
 import { resolveP20OrganizationCodeA } from "./p20-android-fixture.mjs";
 
+const profile = resolveP20AndroidProfile(process.env.SRD_ANDROID_CLIENT || "rn");
 const apkPath = path.resolve(process.env.SRD_ANDROID_APK || "");
 const fixturePath = path.resolve(process.env.SRD_FIXTURE_PATH || "");
 const gateway = new URL(process.env.SRD_GATEWAY_URL || "http://127.0.0.1:8080");
 const androidOrigin = process.env.SRD_ANDROID_GATEWAY_ORIGIN || "";
 const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
-const androidPackage = "com.srd.mobile.qa";
-const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-results/p20-rn-mfa.junit.xml");
-const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/p20-rn-runner-resources.txt");
-const tracePath = path.resolve(process.env.SRD_ANDROID_PROXY_TRACE_PATH || "test-results/p20-android-http-trace.jsonl");
+const androidPackage = profile.androidPackage;
+const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || `test-results/p20-${profile.key}-mfa.junit.xml`);
+const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || `test-results/p20-${profile.key}-runner-resources.txt`);
+const tracePath = path.resolve(process.env.SRD_ANDROID_PROXY_TRACE_PATH || `test-results/p20-${profile.key}-http-trace.jsonl`);
 const proxyPort = Number(process.env.SRD_ANDROID_PROXY_PORT || 8888);
 const result = { passed: false, failure: "not-run" };
 const cases = [];
-let activeCase = "P20 React Native completes real Mailpit MFA";
+let activeCase = `P20 ${profile.client} completes real Mailpit MFA`;
 let stageName = "preflight";
 let serial = "";
 let proxy;
@@ -218,10 +220,10 @@ function writeJUnit() {
   fs.mkdirSync(path.dirname(junitPath), { recursive: true });
   const entries = [...cases];
   if (activeCase) entries.push({ name: activeCase, passed: result.passed, message: result.failure });
-  if (!entries.length) entries.push({ name: "P20 React Native MFA diagnostic", passed: result.passed, message: result.failure });
+  if (!entries.length) entries.push({ name: `P20 ${profile.client} MFA diagnostic`, passed: result.passed, message: result.failure });
   const failures = entries.filter((entry) => !entry.passed).length;
-  const casesXml = entries.map((entry) => `  <testcase classname="srd.p20.android" name="${entry.name}">${entry.passed ? "" : `<failure message="${entry.message}"/>`}</testcase>`).join("\n");
-  fs.writeFileSync(junitPath, `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="SRD P20 React Native MFA diagnostic" tests="${entries.length}" failures="${failures}" errors="0" skipped="0">\n${casesXml}\n</testsuite>\n`, "utf8");
+  const casesXml = entries.map((entry) => `  <testcase classname="srd.p20.${profile.key}" name="${entry.name}">${entry.passed ? "" : `<failure message="${entry.message}"/>`}</testcase>`).join("\n");
+  fs.writeFileSync(junitPath, `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="SRD P20 ${profile.client} MFA diagnostic" tests="${entries.length}" failures="${failures}" errors="0" skipped="0">\n${casesXml}\n</testsuite>\n`, "utf8");
 }
 
 async function run() {
@@ -232,9 +234,9 @@ async function run() {
   failUnless(mailpit.protocol === "http:" && ["127.0.0.1", "localhost"].includes(mailpit.hostname), "mailpit-must-be-loopback");
   failUnless(Number.isInteger(proxyPort) && proxyPort > 0 && proxyPort < 65536, "android-proxy-port-invalid");
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
-  const account = fixture.mobile_user;
+  const account = fixture[profile.accountKey];
   const organizationCodeA = resolveP20OrganizationCodeA(fixture);
-  failUnless(account?.email === "android@srd-e2e.test" && /^[0-9a-f-]{36}$/i.test(account.id || "")
+  failUnless(account?.email === profile.expectedEmail && /^[0-9a-f-]{36}$/i.test(account.id || "")
     && typeof fixture.password === "string" && fixture.password.length >= 32
     && typeof organizationCodeA === "string", "synthetic-viewer-fixture-invalid");
 
@@ -260,6 +262,7 @@ async function run() {
   await waitForNode("Código de junta", { editable: true });
 
   setStage("organization-selection");
+  if (profile.requiresServerField) await typeField("Dirección del servidor", androidOrigin);
   await typeField("Código de junta", organizationCodeA);
   await tapLabel("Continuar");
   await waitForNode("Junta de prueba A");
@@ -279,8 +282,8 @@ async function run() {
   await typeField("Código de verificación", otp);
   await tapLabel("Verificar y entrar");
   setStage("wait-for-authenticated-home");
-  await waitForNode("Hola, Prueba Android");
-  cases.push({ name: "RN reaches the real MFA challenge, receives new Mailpit mail and establishes a session", passed: true });
+  await waitForNode(profile.homeLabel);
+  cases.push({ name: `${profile.key.toUpperCase()} reaches the real MFA challenge, receives new Mailpit mail and establishes a session`, passed: true });
 
   setStage("assert-sanitized-android-request-trace");
   const exchanges = proxy.events.filter((event) => event.event === "http_exchange");
@@ -291,11 +294,11 @@ async function run() {
   failUnless(login.requestHasSessionCookie && login.requestHasCsrfToken, "android-login-session-or-csrf-not-observed");
   failUnless(login.requestHasEmail && login.requestHasPassword, "android-login-fields-not-observed");
   failUnless(Boolean(verify) && verify.status === 200, "android-mfa-verification-not-captured-or-not-200");
-  cases.push({ name: "Sanitized proxy correlates RN CSRF, login, MFA and session HTTP exchanges", passed: true });
+  cases.push({ name: `Sanitized proxy correlates ${profile.key.toUpperCase()} CSRF, login, MFA and session HTTP exchanges`, passed: true });
   result.passed = true;
   result.failure = "";
   activeCase = "";
-  console.log(`PASS P20 RN real MFA; sanitized exchanges=${exchanges.length}; elapsedSeconds=${Math.round((Date.now() - caseStarted) / 1000)}`);
+  console.log(`PASS P20 ${profile.client} real MFA; sanitized exchanges=${exchanges.length}; elapsedSeconds=${Math.round((Date.now() - caseStarted) / 1000)}`);
 }
 
 try {
@@ -312,8 +315,8 @@ try {
       const screenshot = execFileSync("adb", ["-s", serial, "exec-out", "screencap", "-p"], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 });
       if (screenshot.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
         fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
-        fs.writeFileSync(path.join(path.dirname(resourcesPath), "p20-rn-failure.png"), screenshot);
-        failureScreenshot = "p20-rn-failure.png";
+        failureScreenshot = `p20-${profile.key}-failure.png`;
+        fs.writeFileSync(path.join(path.dirname(resourcesPath), failureScreenshot), screenshot);
       }
     } catch { failureScreenshot = "capture-unavailable"; }
   }
@@ -323,7 +326,7 @@ try {
   const loginEvent = traceEvents.find((event) => event.event === "http_exchange" && event.path === "/api/v1/auth/login");
   const verifyEvent = traceEvents.find((event) => event.event === "http_exchange" && event.path === "/api/v1/auth/verify");
   const summary = {
-    client: "react-native-android",
+    client: profile.client,
     passed: result.passed,
     failure: result.failure || null,
     failureStage: stageName,
@@ -343,7 +346,7 @@ try {
     mfaVerificationStatus: verifyEvent?.status ?? null,
     containsCredentialOtpCookieOrTokenValues: false,
   };
-  fs.writeFileSync(path.join(path.dirname(tracePath), "p20-rn-mfa-summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  fs.writeFileSync(path.join(path.dirname(tracePath), `p20-${profile.key}-mfa-summary.json`), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
   fs.writeFileSync(resourcesPath, `MemorySamples: ${memorySamples}\nMinimumMemAvailableGiB: ${minMemGiB}\nSafeFloorGiB: 2.00\nFailureScreenshot: ${failureScreenshot}\nDeviceSystemProxyModified: ${summary.deviceSystemProxyModified}\n`, "utf8");
   writeJUnit();
 }

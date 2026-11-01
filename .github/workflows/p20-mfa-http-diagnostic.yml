@@ -22,6 +22,7 @@ on:
         options:
           - http
           - android-rn
+          - android-expo
 
 permissions:
   contents: read
@@ -99,7 +100,7 @@ jobs:
             exit 1
           fi
           ports=(8080 8025)
-          if [[ "$P20_MODE" == 'android-rn' ]]; then ports+=(8888); fi
+          if [[ "$P20_MODE" == 'android-rn' || "$P20_MODE" == 'android-expo' ]]; then ports+=(8888); fi
           for port in "${ports[@]}"; do
             if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
               echo "Required QA port $port is already in use; nothing was stopped." >&2
@@ -129,6 +130,8 @@ jobs:
           node --check sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs
+          node --check sources/SRD-Docker-Infra/tools/p20-android-client-profile.mjs
+          node --test sources/SRD-Docker-Infra/tools/p20-android-client-profile.test.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-fixture.mjs
           node --test sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.test.mjs sources/SRD-Docker-Infra/tools/p20-android-fixture.test.mjs
           php -l sources/SRD-Docker-Infra/tools/p20-mobile-auth-state.php
@@ -309,7 +312,7 @@ jobs:
         run: node sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
 
       - name: Verify Android runner capacity and KVM for focused MFA diagnosis
-        if: env.P20_MODE == 'android-rn'
+        if: env.P20_MODE == 'android-rn' || env.P20_MODE == 'android-expo'
         shell: bash
         run: |
           set -euo pipefail
@@ -335,7 +338,7 @@ jobs:
           } | tee test-results/p20-android-runner-capacity.txt
 
       - name: Set up Java 17 for the focused Android diagnostic
-        if: env.P20_MODE == 'android-rn'
+        if: env.P20_MODE == 'android-rn' || env.P20_MODE == 'android-expo'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -349,7 +352,7 @@ jobs:
             sources/SRD-Frontend/apps/mobile/android/app/build.gradle
 
       - name: Install Android SDK packages for the focused diagnostic
-        if: env.P20_MODE == 'android-rn'
+        if: env.P20_MODE == 'android-rn' || env.P20_MODE == 'android-expo'
         uses: android-actions/setup-android@v4
         with:
           accept-android-sdk-licenses: true
@@ -390,6 +393,31 @@ jobs:
           "${ANDROID_HOME}/build-tools/37.0.0/aapt" dump badging "${apk_path}" | grep -Fq "package: name='com.srd.mobile.qa'"
           "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify "${apk_path}"
 
+      - name: Build the pinned Expo SDK 58 QA APK
+        if: env.P20_MODE == 'android-expo'
+        shell: bash
+        env:
+          EXPO_PUBLIC_SRD_QA_ONLY: '1'
+          SRD_EXPO_QA_BUILD: '1'
+        run: |
+          set -euo pipefail
+          cd sources/SRD-Frontend/apps/mobile-expo
+          if grep -RIlF 'srd-jsgh1.duckdns.org' . --exclude=package-lock.json; then
+            echo 'Expo source unexpectedly contains the production host.' >&2
+            exit 1
+          fi
+          npm ci --no-audit --no-fund
+          sdkmanager --install 'platforms;android-37.2' --channel=3
+          sdkmanager --install 'build-tools;37.0.0'
+          npx expo prebuild --platform android --no-install
+          grep -Fq 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon --max-workers=2
+          apk_path='app/build/outputs/apk/release/app-release.apk'
+          test -f "${apk_path}"
+          "${ANDROID_HOME}/build-tools/37.0.0/aapt" dump badging "${apk_path}" | grep -Fq "package: name='com.srd.mobileexpo'"
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify "${apk_path}"
+
       - name: Run focused React Native login and real MFA request trace
         if: env.P20_MODE == 'android-rn'
         uses: reactivecircus/android-emulator-runner@v2
@@ -421,8 +449,40 @@ jobs:
           SRD_COMPOSE_ENV_FILE: assembled/.env
           SRD_COMPOSE_FILE: assembled/compose.yaml
 
+      - name: Run focused Expo login and real MFA request trace
+        if: env.P20_MODE == 'android-expo'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          disable-spellchecker: true
+          emulator-boot-timeout: 600
+          script: node sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs
+        env:
+          SRD_ANDROID_APK: sources/SRD-Frontend/apps/mobile-expo/android/app/build/outputs/apk/release/app-release.apk
+          SRD_ANDROID_CLIENT: expo
+          SRD_FIXTURE_PATH: assembled/.local/e2e-fixture.json
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
+          SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8888
+          SRD_MAILPIT_URL: http://127.0.0.1:8025
+          SRD_ANDROID_JUNIT_PATH: test-results/p20-expo-mfa.junit.xml
+          SRD_ANDROID_RESOURCES_PATH: test-results/p20-expo-runner-resources.txt
+          SRD_ANDROID_AUTH_DIAGNOSTIC: '1'
+          SRD_ANDROID_AUTH_DIAGNOSTIC_ONLY: '1'
+          SRD_ANDROID_PROXY_TRACE_PATH: test-results/p20-expo-http-trace.jsonl
+          SRD_ANDROID_PROXY_PORT: '8888'
+          SRD_ASSERT_FIXTURE_SESSIONS: '1'
+          SRD_COMPOSE_ENV_FILE: assembled/.env
+          SRD_COMPOSE_FILE: assembled/compose.yaml
+
       - name: Capture value-free authentication state after Android diagnosis
-        if: always() && env.P20_MODE == 'android-rn'
+        if: always() && (env.P20_MODE == 'android-rn' || env.P20_MODE == 'android-expo')
         shell: bash
         run: |
           set -euo pipefail
@@ -432,7 +492,10 @@ jobs:
           }
           identity_container="$(compose ps -q identity 2>/dev/null || true)"
           if [[ -n "$identity_container" ]] && [[ "$(docker inspect --format '{{.State.Running}}' "$identity_container" 2>/dev/null || true)" == "true" ]]; then
-            correlation_id="$(node -e 'const fs=require("node:fs");const p="test-results/p20-android-http-trace.jsonl";if(fs.existsSync(p)){for(const l of fs.readFileSync(p,"utf8").split(/\r?\n/)){try{const e=JSON.parse(l);if(typeof e.correlationId==="string"){process.stdout.write(e.correlationId);break}}catch{}}}')"
+            client="${P20_MODE#android-}"
+            trace="test-results/p20-${client}-http-trace.jsonl"
+            if [[ "$client" == 'rn' ]]; then trace='test-results/p20-android-http-trace.jsonl'; fi
+            correlation_id="$(node -e 'const fs=require("node:fs");const p=process.argv[1];if(fs.existsSync(p)){for(const l of fs.readFileSync(p,"utf8").split(/\r?\n/)){try{const e=JSON.parse(l);if(typeof e.correlationId==="string"){process.stdout.write(e.correlationId);break}}catch{}}}' "$trace")"
             compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
             compose cp assembled/tools/p20-mobile-auth-state.php identity:/tmp/srd-p20-mobile-auth-state.php
             compose cp assembled/.local/e2e-fixture.json identity:/tmp/srd-p20-fixture.json
@@ -441,7 +504,7 @@ jobs:
                 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
                 -e SRD_FIXTURE_PATH=/tmp/srd-p20-fixture.json -e "SRD_P20_CORRELATION_ID=$correlation_id" \
                 identity php /tmp/srd-p20-mobile-auth-state.php "$account" \
-                > "test-results/p20-auth-after-rn-$account.json"
+                > "test-results/p20-auth-after-$client-$account.json"
             done
           else
             echo 'identity-container-not-running' > test-results/p20-auth-after-rn-status.txt
@@ -486,10 +549,14 @@ jobs:
             test-results/p11-mysql-tenant.junit.xml
             test-results/p20-mfa-http.junit.xml
             test-results/p20-rn-mfa.junit.xml
+            test-results/p20-expo-mfa.junit.xml
             test-results/p20-rn-runner-resources.txt
+            test-results/p20-expo-runner-resources.txt
             test-results/p20-android-http-trace.jsonl
+            test-results/p20-expo-http-trace.jsonl
             test-results/p20-android-runner-capacity.txt
             test-results/p20-rn-failure.png
+            test-results/p20-expo-failure.png
             assembled/srd-provenance.json
           if-no-files-found: warn
           retention-days: 7
