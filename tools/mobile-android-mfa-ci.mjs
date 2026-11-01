@@ -455,28 +455,50 @@ function setEmulatorNetworkAvailable(available) {
   }
 }
 
-async function verifyRealNetworkRecovery(triggerLabel, fixtureUserId) {
+async function verifyRealNetworkRecovery(openPeopleListLabel, fixtureUserId, searchQuery = "") {
+  stage("open-people-list-before-network-cut");
+  await tapLabel(openPeopleListLabel);
+  await waitForNode("Busca por nombre, apellido o número de documento.");
+  if (searchQuery) await typeField("Buscar personas", searchQuery);
+  stage("verify-people-read-before-network-cut");
+  await tapLabel("Buscar");
+  await waitForEnabledLabel("Buscar");
+  await waitForNode("resultado(s)", {contains: true});
+  if (searchQuery) await waitForNode("1 resultado(s)");
+
   let networkCutAttempted = false;
+  let probeError;
+  let probeFailureStage = "";
   try {
     stage("disable-emulator-wifi-and-cellular-transport");
     networkCutAttempted = true;
     setEmulatorNetworkAvailable(false);
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    stage("request-protected-read-from-the-app-while-offline");
-    await tapLabel(triggerLabel);
+    stage("repeat-people-search-from-list-while-offline");
+    await tapLabel("Buscar");
     await waitForNode("No hay conexión con el servidor. Comprueba su dirección y tu red.");
     assertSyntheticActiveSessions(fixtureUserId, 1);
+  } catch (error) {
+    probeError = error;
+    probeFailureStage = currentStage;
   } finally {
     if (networkCutAttempted) {
       stage("restore-emulator-network-in-finally");
       setEmulatorNetworkAvailable(true);
     }
   }
+  if (probeError) {
+    currentStage = probeFailureStage;
+    throw probeError;
+  }
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
   stage("retry-idempotent-people-read-after-network-restoration");
-  await tapLabel(triggerLabel);
-  await waitForNode("Personas");
+  await tapLabel("Buscar");
+  await waitForEnabledLabel("Buscar");
+  await waitForNode("resultado(s)", {contains: true});
+  if (searchQuery) await waitForNode("1 resultado(s)");
+  assert(!findNode(uiNodes(), "No hay conexión con el servidor. Comprueba su dirección y tu red."), "network-error-remained-after-restoration");
   assertSyntheticActiveSessions(fixtureUserId, 1);
 }
 
@@ -891,7 +913,7 @@ async function run() {
   passCase();
 
   beginCase("React Native reports a real network cut and recovers a safe read after restoration");
-  await verifyRealNetworkRecovery("Consultar personas", registrarUserId);
+  await verifyRealNetworkRecovery("Consultar personas", registrarUserId, syntheticDocumentNumber);
   passCase();
 
   beginCase("Android logout revokes the active session and remains anonymous after restart");
