@@ -221,17 +221,23 @@ export async function startSanitizedAndroidProxy({ tracePath, port = 8888, upstr
 
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       resolve();
     });
   });
-  const actualPort = server.address().port;
-  append({ service: "android-proxy", event: "proxy_started", status: 200, listeningPort: actualPort, onlyQaOriginAllowed: true });
+  const address = server.address();
+  if (!address || typeof address === "string" || address.address !== "127.0.0.1") {
+    await new Promise((resolve) => server.close(resolve));
+    throw new Error("proxy-listener-must-use-loopback");
+  }
+  const actualPort = address.port;
+  append({ service: "android-proxy", event: "proxy_started", status: 200, listeningHost: address.address, listeningPort: actualPort, onlyQaOriginAllowed: true });
 
   return {
     correlationId,
     port: actualPort,
+    listeningAddress: address.address,
     events,
     async close() {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

@@ -59,6 +59,7 @@ test("P20 Android proxy forwards QA HTTP and writes only redacted metadata", asy
   const tracePath = path.join(os.tmpdir(), `srd-p20-proxy-${process.pid}-${Date.now()}.jsonl`);
   const proxy = await startSanitizedAndroidProxy({ tracePath, upstream: `http://127.0.0.1:${upstreamPort}` });
   try {
+    assert.equal(proxy.listeningAddress, "127.0.0.1");
     const loginBody = JSON.stringify({ email: "android@srd-e2e.test", password: passwordValue, organization_code: "srd-e2e-a", terms_accepted: true });
     const login = await requestThroughProxy(proxy.port, {
       target: "/api/v1/auth/login?ignored=private",
