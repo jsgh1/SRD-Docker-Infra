@@ -71,9 +71,22 @@ test('el planificador cierra en Reverb un socket cuya sesión venció por inacti
   let closed = false;
   socket.on('close', () => { closed = true; });
 
-  execFileSync('docker', ['compose', 'cp', 'tools/expire-fixture-session.php', 'identity:/tmp/srd-expire-fixture.php'], { cwd: root, timeout: 30000 });
-  execFileSync('docker', ['compose', 'exec', '-T', '-e', 'SRD_ALLOW_MYSQL_FIXTURES=1', 'identity', 'php', '/tmp/srd-expire-fixture.php', id], { cwd: root, timeout: 30000 });
-  execFileSync('docker', ['compose', 'exec', '-T', 'identity', 'php', 'artisan', 'srd:expire-chat-sessions'], { cwd: root, timeout: 30000 });
+  const project = process.env.SRD_COMPOSE_PROJECT || process.env.COMPOSE_PROJECT_NAME;
+  if (!project) throw new Error('A dedicated QA Compose project is required for fixture mutation.');
+  const fixturePath = '/tmp/srd-chat-session-fixture.json';
+  try {
+    execFileSync('docker', ['compose', '--project-name', project, 'cp', 'tools/fixture-safety.php', 'identity:/tmp/srd-fixture-safety.php'], { cwd: root, timeout: 30000 });
+    execFileSync('docker', ['compose', '--project-name', project, 'cp', 'tools/expire-fixture-session.php', 'identity:/tmp/srd-expire-fixture.php'], { cwd: root, timeout: 30000 });
+    execFileSync('docker', ['compose', '--project-name', project, 'cp', process.env.SRD_BROWSER_FIXTURE, `identity:${fixturePath}`], { cwd: root, timeout: 30000 });
+    execFileSync('docker', ['compose', '--project-name', project, 'exec', '-T', '-e', 'SRD_ALLOW_MYSQL_FIXTURES=1', '-e', `SRD_COMPOSE_PROJECT=${project}`, '-e', `SRD_FIXTURE_PATH=${fixturePath}`, 'identity', 'php', '/tmp/srd-expire-fixture.php', id], { cwd: root, timeout: 30000 });
+  } finally {
+    try {
+      execFileSync('docker', ['compose', '--project-name', project, 'exec', '-T', '--user', '0', 'identity', 'rm', '-f', '/tmp/srd-expire-fixture.php', '/tmp/srd-fixture-safety.php', fixturePath], { cwd: root, timeout: 30000 });
+    } catch {
+      // The ephemeral Compose cleanup owns recovery if the service stopped during the test.
+    }
+  }
+  execFileSync('docker', ['compose', '--project-name', project, 'exec', '-T', 'identity', 'php', 'artisan', 'srd:expire-chat-sessions'], { cwd: root, timeout: 30000 });
   await expect.poll(() => closed, { timeout: 5000 }).toBe(true);
   expect((await page.request.get('/api/v1/chat/broadcast-config')).status()).toBe(401);
 });

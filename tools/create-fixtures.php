@@ -2,10 +2,13 @@
 // Synthetic local fixtures only. No input document or ZIP data is used.
 $root=getenv('SRD_ROOT') ?: dirname(__DIR__);$service=$argv[1]??'';
 if(!in_array($service,['identity','configuration','calendar','audit'],true))exit(1);
+$safetyPath=getenv('SRD_FIXTURE_SAFETY_PATH') ?: "$root/tools/fixture-safety.php";
+if(!is_file($safetyPath))throw new RuntimeException('Fixture safety policy is unavailable.');
+require $safetyPath;
 require "$root/services/$service/vendor/autoload.php";
 $app=require "$root/services/$service/bootstrap/app.php";
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if(!app()->environment('local') || (config('database.default')!=='sqlite' && getenv('SRD_ALLOW_MYSQL_FIXTURES')!=='1'))throw new RuntimeException('Fixtures require an explicitly selected isolated local environment.');
+srdAssertBootstrappedFixtureTarget($service);
 $file=getenv('SRD_FIXTURE_PATH') ?: "$root/.local/e2e-fixture.json";
 if(is_file($file))$fixture=json_decode(file_get_contents($file),true);
 else {
@@ -13,6 +16,8 @@ else {
  foreach(['admin','registrar','treasurer','auditor','viewer','superadmin'] as $role)$fixture['users'][$role]=['id'=>(string)Illuminate\Support\Str::uuid(),'email'=>"$role@srd-e2e.test"];
  file_put_contents($file,json_encode($fixture,JSON_PRETTY_PRINT));
 }
+if(!is_array($fixture))throw new RuntimeException('Synthetic fixture document is invalid.');
+srdAssertSyntheticFixture($fixture);
 Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
  if($service==='configuration')foreach(['A','B']as $letter){
   $id=$fixture['org'.$letter];
@@ -32,8 +37,31 @@ Illuminate\Support\Facades\DB::transaction(function()use($service,$fixture){
  }
  if($service==='identity' && !empty($fixture['mobile_user']['id']) && !empty($fixture['mobile_user']['email'])){
   $mobile=$fixture['mobile_user'];
-  Illuminate\Support\Facades\DB::table('users')->insertOrIgnore(['id'=>$mobile['id'],'email'=>$mobile['email'],'name'=>'Prueba Android','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'created_at'=>now(),'updated_at'=>now()]);
-  Illuminate\Support\Facades\DB::table('memberships')->insertOrIgnore(['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA'],'role'=>'viewer']);
+  $userQuery=Illuminate\Support\Facades\DB::table('users')->where('id',$mobile['id']);
+  $existingUser=$userQuery->first();
+  $userData=['email'=>$mobile['email'],'name'=>'Prueba Android','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'active'=>true,'updated_at'=>now()];
+  if($existingUser)$userQuery->update($userData);
+  else Illuminate\Support\Facades\DB::table('users')->insert($userData+['id'=>$mobile['id'],'created_at'=>now()]);
+
+  $membershipQuery=Illuminate\Support\Facades\DB::table('memberships')->where('user_id',$mobile['id'])->where('organization_id',$fixture['orgA']);
+  $existingMembership=$membershipQuery->first();
+  $membershipData=['role'=>'viewer','active'=>true,'version'=>1];
+  if($existingMembership)$membershipQuery->update($membershipData);
+  else Illuminate\Support\Facades\DB::table('memberships')->insert($membershipData+['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA']]);
+ }
+ if($service==='identity' && !empty($fixture['mobile_registrar_user']['id']) && !empty($fixture['mobile_registrar_user']['email'])){
+  $mobile=$fixture['mobile_registrar_user'];
+  $userQuery=Illuminate\Support\Facades\DB::table('users')->where('id',$mobile['id']);
+  $existingUser=$userQuery->first();
+  $userData=['email'=>$mobile['email'],'name'=>'Prueba Android Registrador','password'=>Illuminate\Support\Facades\Hash::make($fixture['password']),'active'=>true,'superadmin'=>false,'updated_at'=>now()];
+  if($existingUser)$userQuery->update($userData);
+  else Illuminate\Support\Facades\DB::table('users')->insert($userData+['id'=>$mobile['id'],'created_at'=>now()]);
+
+  $membershipQuery=Illuminate\Support\Facades\DB::table('memberships')->where('user_id',$mobile['id'])->where('organization_id',$fixture['orgA']);
+  $existingMembership=$membershipQuery->first();
+  $membershipData=['role'=>'registrar','active'=>true,'version'=>1];
+  if($existingMembership)$membershipQuery->update($membershipData);
+  else Illuminate\Support\Facades\DB::table('memberships')->insert($membershipData+['id'=>(string)Illuminate\Support\Str::uuid(),'user_id'=>$mobile['id'],'organization_id'=>$fixture['orgA']]);
  }
  if($service==='identity' && getenv('SRD_BROWSER_SPEC')==='chat-conversations-pagination.spec.mjs'){
   $password=Illuminate\Support\Facades\Hash::make($fixture['password']);
