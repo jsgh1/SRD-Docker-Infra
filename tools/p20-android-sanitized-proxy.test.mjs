@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isAllowedQaTarget, startSanitizedAndroidProxy } from "./p20-android-sanitized-proxy.mjs";
+import { isAllowedQaRequest, isAllowedQaTarget, startSanitizedAndroidProxy } from "./p20-android-sanitized-proxy.mjs";
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -106,6 +106,34 @@ test("P20 Android reverse proxy accepts only the emulator-to-proxy QA origin", (
   assert.equal(isAllowedQaTarget(new URL("https://10.0.2.2:8888/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("http://10.0.2.2:443/api/v1/me")), false);
   assert.equal(isAllowedQaTarget(new URL("https://srd-jsgh1.duckdns.org/api/v1/me")), false);
+  assert.equal(isAllowedQaRequest("POST", new URL("http://10.0.2.2:8888/api/v1/auth/login")), true);
+  assert.equal(isAllowedQaRequest("GET", new URL("http://10.0.2.2:8888/api/v1/organizations/srd-e2e-a")), true);
+  assert.equal(isAllowedQaRequest("GET", new URL("http://10.0.2.2:8888/api/v1/dashboard")), true);
+  assert.equal(isAllowedQaRequest("POST", new URL("http://10.0.2.2:8888/api/v1/persons")), false);
+  assert.equal(isAllowedQaRequest("POST", new URL("http://10.0.2.2:8888/api/v1/auth/recover")), false);
+  assert.equal(isAllowedQaRequest("GET", new URL("http://10.0.2.2:8888/api/v1/auth/login")), false);
+});
+
+test("P20 Android proxy rejects unlisted API methods and paths before forwarding", async () => {
+  let upstreamRequests = 0;
+  const upstream = http.createServer((request, response) => {
+    upstreamRequests += 1;
+    request.resume();
+    request.on("end", () => { response.writeHead(200); response.end("forwarded"); });
+  });
+  const upstreamPort = await listen(upstream);
+  const tracePath = path.join(os.tmpdir(), `srd-p20-proxy-deny-${process.pid}-${Date.now()}.jsonl`);
+  const proxy = await startSanitizedAndroidProxy({ tracePath, upstream: `http://127.0.0.1:${upstreamPort}` });
+  try {
+    const deniedPath = await requestThroughProxy(proxy.port, { target: "/api/v1/persons" });
+    const deniedMethod = await requestThroughProxy(proxy.port, { target: "/api/v1/auth/login", method: "GET" });
+    assert.deepEqual([deniedPath.status, deniedMethod.status], [403, 403]);
+    assert.equal(upstreamRequests, 0);
+  } finally {
+    await proxy.close();
+    await close(upstream);
+    fs.rmSync(tracePath, { force: true });
+  }
 });
 
 test("P20 Android proxy assigns unique sequence numbers to concurrent exchanges", async () => {

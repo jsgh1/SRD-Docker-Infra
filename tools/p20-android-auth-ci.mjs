@@ -310,7 +310,12 @@ try {
   if (proxy) {
     try { await proxy.close(); } catch { /* The GitHub runner is discarded after this job. */ }
   }
-  if (!result.passed && serial) {
+  const screenshotMayContainMfaCode = [
+    "submit-real-mfa-code-in-android",
+    "wait-for-authenticated-home",
+    "assert-sanitized-android-request-trace",
+  ].includes(stageName);
+  if (!result.passed && serial && !screenshotMayContainMfaCode) {
     try {
       const screenshot = execFileSync("adb", ["-s", serial, "exec-out", "screencap", "-p"], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 });
       if (screenshot.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
@@ -319,6 +324,8 @@ try {
         fs.writeFileSync(path.join(path.dirname(resourcesPath), failureScreenshot), screenshot);
       }
     } catch { failureScreenshot = "capture-unavailable"; }
+  } else if (!result.passed && serial && screenshotMayContainMfaCode) {
+    failureScreenshot = "suppressed-sensitive-auth-state";
   }
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minMemGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";

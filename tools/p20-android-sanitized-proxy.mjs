@@ -7,6 +7,7 @@ const allowedOrigin = "http://10.0.2.2:8888";
 const safeRoutes = new Map([
   ["GET /api/v1/csrf", "csrf-bootstrap"],
   ["GET /api/v1/me", "session-read"],
+  ["GET /api/v1/dashboard", "dashboard"],
   ["POST /api/v1/auth/login", "login"],
   ["POST /api/v1/auth/verify", "mfa-verification"],
   ["POST /api/v1/auth/logout", "logout"],
@@ -17,6 +18,14 @@ const hopByHopHeaders = new Set([
 
 export function isAllowedQaTarget(target) {
   return target instanceof URL && target.origin === allowedOrigin && target.pathname.startsWith("/api/v1/");
+}
+
+export function isAllowedQaRequest(method, target) {
+  if (!isAllowedQaTarget(target)) return false;
+  const requestMethod = String(method || "GET").toUpperCase();
+  const route = `${requestMethod} ${target.pathname}`;
+  return safeRoutes.has(route)
+    || (requestMethod === "GET" && /^\/api\/v1\/organizations\/[^/]+$/.test(target.pathname));
 }
 
 function normalizedRoute(method, pathname) {
@@ -96,7 +105,7 @@ export async function startSanitizedAndroidProxy({ tracePath, port = 8888, upstr
 
   const server = http.createServer((clientRequest, clientResponse) => {
     const target = requestUrl(clientRequest);
-    const targetAllowed = isAllowedQaTarget(target);
+    const targetAllowed = isAllowedQaRequest(clientRequest.method, target);
     const route = target ? normalizedRoute(clientRequest.method || "GET", target.pathname) : { name: "invalid-target", path: "/invalid" };
     if (!targetAllowed) {
       append({ service: "android-proxy", event: "target-rejected", method: clientRequest.method || "GET", path: route.path, status: 403, targetAllowed: false });
