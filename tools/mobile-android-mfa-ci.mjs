@@ -30,6 +30,7 @@ let lastUiLabels = [];
 let lastUiDetails = [];
 let lastEditableStates = [];
 let freshMfaMailObserved = "not-checked";
+let hostLoginDiagnostic = "not-run";
 let failureScreenshot = "not-captured";
 const sessionObservations = {
   viewerCanConsultPeople: "not-checked",
@@ -583,6 +584,70 @@ async function observeFreshMfaMessage(email, previousIds) {
   }
 }
 
+async function diagnoseHostMobileLogin(fixture, email, password, organizationCode) {
+  const diagnostic = {
+    csrf: "not-run",
+    organization: "not-run",
+    fixtureTermsMatch: "not-checked",
+    login: "not-run",
+    challengeCancellation: "not-needed",
+  };
+  try {
+    const csrfResponse = await fetch(new URL("/api/v1/csrf", gateway), {signal: AbortSignal.timeout(10000)});
+    diagnostic.csrf = String(csrfResponse.status);
+    if (!csrfResponse.ok) return diagnostic;
+    const csrfPayload = await csrfResponse.json();
+    const cookieValues = typeof csrfResponse.headers.getSetCookie === "function"
+      ? csrfResponse.headers.getSetCookie()
+      : [csrfResponse.headers.get("set-cookie") || ""];
+    const cookieHeader = cookieValues.map((value) => value.split(";")[0]).filter(Boolean).join("; ");
+    if (!csrfPayload.data?.token || !cookieHeader) {
+      diagnostic.csrf = `${csrfResponse.status}-missing-cookie-or-token`;
+      return diagnostic;
+    }
+    const headers = {Accept: "application/json", "Content-Type": "application/json", Cookie: cookieHeader};
+    const organizationResponse = await fetch(new URL(`/api/v1/organizations/${encodeURIComponent(organizationCode)}`, gateway), {
+      headers, signal: AbortSignal.timeout(10000),
+    });
+    diagnostic.organization = String(organizationResponse.status);
+    if (!organizationResponse.ok) return diagnostic;
+    const organizationPayload = await organizationResponse.json();
+    const organization = organizationPayload.data;
+    diagnostic.fixtureTermsMatch = String(organization?.terms?.id === fixture.termsA);
+    if (!organization?.terms?.id) return diagnostic;
+
+    const loginResponse = await fetch(new URL("/api/v1/auth/login", gateway), {
+      method: "POST",
+      headers: {...headers, "X-CSRF-TOKEN": csrfPayload.data.token},
+      body: JSON.stringify({
+        email,
+        password,
+        organization_code: organization.code,
+        accepted: true,
+        terms_version_id: organization.terms.id,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    diagnostic.login = String(loginResponse.status);
+    if (loginResponse.ok) {
+      const loginPayload = await loginResponse.json();
+      const challengeId = loginPayload.data?.challenge_id;
+      if (typeof challengeId === "string") {
+        const cancelResponse = await fetch(new URL("/api/v1/auth/cancel", gateway), {
+          method: "POST",
+          headers: {...headers, "X-CSRF-TOKEN": csrfPayload.data.token},
+          body: JSON.stringify({challenge_id: challengeId}),
+          signal: AbortSignal.timeout(10000),
+        });
+        diagnostic.challengeCancellation = String(cancelResponse.status);
+      }
+    }
+  } catch {
+    diagnostic.login = "probe-failed";
+  }
+  return diagnostic;
+}
+
 async function assertNoFreshMfaMessage(email, previousIds) {
   const messages = await getMailpitMessages();
   const delivered = messages.some((item) => !previousIds.has(item.ID)
@@ -666,6 +731,11 @@ async function run() {
 
   await replaceFieldWithCurrentValue("Correo electr\u00f3nico", email);
   await replaceFieldWithCurrentValue("Contrase\u00f1a", password);
+  stage("verify-fixture-password-entry");
+  await tapLabel("Mostrar contrase\u00f1a");
+  const visiblePasswordField = findNode(uiNodes(), "Contrase\u00f1a", {editable: true});
+  assert(editableValue(visiblePasswordField, "Contrase\u00f1a") === password, "android-password-input-does-not-match-fixture");
+  await tapLabel("Ocultar contrase\u00f1a");
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
@@ -673,6 +743,7 @@ async function run() {
     await waitForNode("Revisa tu correo");
   } catch (error) {
     freshMfaMailObserved = await observeFreshMfaMessage(email, previousIds);
+    hostLoginDiagnostic = JSON.stringify(await diagnoseHostMobileLogin(fixture, email, password, organizationCode));
     throw error;
   }
   const mfaNodes = uiNodes();
@@ -945,7 +1016,7 @@ try {
   }
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nFailureScreenshot: ${failureScreenshot}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nHostLoginDiagnostic: ${hostLoginDiagnostic}\nFailureScreenshot: ${failureScreenshot}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
   const sessionDiagnostics = Object.entries(sessionObservations).map(([key, value]) => `${key}: ${value}`).join("\n");
   fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${sessionDiagnostics}\n${uiDiagnostics}`);
   writeJUnit();
