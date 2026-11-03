@@ -18,8 +18,7 @@ const gateway = new URL(process.env.SRD_GATEWAY_URL || "http://127.0.0.1:8080");
 const androidOrigin = process.env.SRD_ANDROID_GATEWAY_ORIGIN || "";
 const androidPackage = process.env.SRD_ANDROID_PACKAGE || "com.srd.mobile.qa";
 const rejectedLoginMessage = process.env.SRD_ANDROID_REJECTED_LOGIN_MESSAGE || "Debes iniciar sesi\u00f3n.";
-const isExpoClient = androidPackage === "com.srd.mobileexpo";
-const junitSuiteName = isExpoClient ? "SRD Expo Android QA E2E" : "SRD Android QA E2E";
+const junitSuiteName = "SRD React Native Android QA E2E";
 const mailpit = new URL(process.env.SRD_MAILPIT_URL || "http://127.0.0.1:8025");
 const junitPath = path.resolve(process.env.SRD_ANDROID_JUNIT_PATH || "test-results/android-qa-e2e.junit.xml");
 const resourcesPath = path.resolve(process.env.SRD_ANDROID_RESOURCES_PATH || "test-results/android-runner-resources.txt");
@@ -40,10 +39,6 @@ const sessionObservations = {
   afterServerRevocation: "not-run",
   afterUiLogout: "not-run",
   afterLogoutForceStop: "not-run",
-  expoAfterBackground: "not-run",
-  expoAfterForceStop: "not-run",
-  expoAfterServerRevocation: "not-run",
-  expoAfterLogoutForceStop: "not-run",
   registrarRegistrationAction: "not-run",
   registrarPendingPersonCreated: "not-run",
   networkProbeMode: "ephemeral-qa-web-unavailable",
@@ -338,10 +333,6 @@ async function verifyEmptyLoginForm(fixtureUserId, organizationCode) {
   launchQaApp();
   stage("open-join-code-after-empty-login-reset");
   await waitForNode("Código de junta", { editable: true });
-  if (isExpoClient && findNode(uiNodes(), "Dirección del servidor", {editable: true})) {
-    stage("restore-qa-gateway-origin-after-empty-login-reset");
-    await typeField("Dirección del servidor", androidOrigin);
-  }
   stage("enter-synthetic-organization-after-empty-login-reset");
   await typeField("Código de junta", organizationCode);
   stage("submit-synthetic-organization-after-empty-login-reset");
@@ -663,11 +654,6 @@ async function run() {
   await waitForNode("C\u00f3digo de junta", { editable: true });
   console.log("PASS Android QA APK installed and launched");
 
-  if (isExpoClient && findNode(uiNodes(), "Direcci\u00f3n del servidor", {editable: true})) {
-    stage("enter-qa-gateway-origin");
-    await typeField("Direcci\u00f3n del servidor", androidOrigin);
-  }
-
   stage("enter-join-code");
   await typeField("C\u00f3digo de junta", organizationCode);
   stage("tap-continue-after-join-code");
@@ -698,110 +684,6 @@ async function run() {
 
   stage("wait-for-mailpit-mfa");
   const code = await waitForMfaCode(email, previousIds);
-  if (isExpoClient) {
-    beginCase("Expo SDK 58 rejects an incorrect MFA code without creating a session");
-    stage("reject-incorrect-expo-mfa-code");
-    const wrongExpoCode = `${code[0] === "9" ? "0" : String(Number(code[0]) + 1)}${code.slice(1)}`;
-    await typeField("C\u00f3digo de verificaci\u00f3n", wrongExpoCode);
-    await tapLabel("Verificar y entrar");
-    await waitForNode("Revisa los datos del formulario.");
-    const rejectedExpoMfaNodes = await waitForEnabledLabel("Verificar y entrar");
-    assert(authUiState(rejectedExpoMfaNodes) === "mfa-challenge", "expo-invalid-mfa-left-challenge-screen-unverified");
-    assert(!findNode(rejectedExpoMfaNodes, "Hola, Prueba Android"), "expo-invalid-mfa-opened-authenticated-home");
-    assertSyntheticActiveSessions(mobileUserId, 0);
-    passCase();
-
-    beginCase("Expo SDK 58 completes real Gateway and Mailpit MFA and renders viewer permissions");
-    stage("submit-valid-expo-mfa-code");
-    await replaceField("C\u00f3digo de verificaci\u00f3n", wrongExpoCode.length, code);
-    await tapLabel("Verificar y entrar");
-    await waitForNode("Hola, Prueba Android");
-    assertSyntheticActiveSessions(mobileUserId, 1);
-    const viewerHomeNodes = uiNodes();
-    sessionObservations.viewerCanConsultPeople = String(Boolean(findNodeContaining(viewerHomeNodes, "Personas")));
-    sessionObservations.viewerRegisterAction = findNodeContaining(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
-    assert(sessionObservations.viewerCanConsultPeople === "true", "expo-viewer-people-action-not-visible");
-    assert(sessionObservations.viewerRegisterAction === "not-visible", "expo-viewer-register-action-visible");
-    passCase();
-
-    beginCase("Expo SDK 58 restores its authenticated session after background and process death");
-    stage("expo-background-and-resume-session-observation");
-    adb(["shell", "input", "keyevent", "KEYCODE_HOME"]);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    launchQaApp();
-    sessionObservations.expoAfterBackground = await waitForAuthUiState();
-    assert(sessionObservations.expoAfterBackground === "authenticated-home", "expo-session-not-restored-after-background");
-
-    stage("expo-force-stop-and-relaunch-session-observation");
-    adb(["shell", "am", "force-stop", androidPackage]);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    launchQaApp();
-    sessionObservations.expoAfterForceStop = await waitForAuthUiState();
-    assert(sessionObservations.expoAfterForceStop === "authenticated-home", "expo-session-not-restored-after-force-stop");
-    assertSyntheticActiveSessions(mobileUserId, 1);
-    passCase();
-
-    beginCase("Expo SDK 58 rejects a persisted session revoked by the server");
-    stage("expo-revoke-active-synthetic-session-on-server");
-    revokeSyntheticActiveSession(mobileUserId);
-    assertSyntheticActiveSessions(mobileUserId, 0);
-    stage("expo-verify-server-revocation-after-process-restart");
-    adb(["shell", "am", "force-stop", androidPackage]);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    launchQaApp();
-    sessionObservations.expoAfterServerRevocation = await waitForAuthUiState();
-    assert(["login-required", "organization-selection"].includes(sessionObservations.expoAfterServerRevocation), "expo-server-revoked-session-restored");
-    assertSyntheticActiveSessions(mobileUserId, 0);
-    passCase();
-
-    beginCase("Expo SDK 58 reauthenticates after server revocation with one new session");
-    stage("expo-reauthenticate-after-server-revocation");
-    const beforeExpoReauthentication = new Set((await getMailpitMessages()).map((item) => item.ID));
-    await ensureOrganizationTermsAccepted();
-    await replaceField("Correo electr\u00f3nico", email.length, email);
-    await replaceField("Contrase\u00f1a", password.length + 1, password);
-    await tapLabel("Ingresar");
-    await waitForNode("Revisa tu correo");
-    const expoReauthenticationCode = await waitForMfaCode(email, beforeExpoReauthentication);
-    stage("wait-for-server-defined-expo-mfa-resend-cooldown-before-reauthentication");
-    await waitForEnabledLabel("Reenviar c\u00f3digo", 70000);
-    await typeField("C\u00f3digo de verificaci\u00f3n", expoReauthenticationCode);
-    await tapLabel("Verificar y entrar");
-    await waitForNode("Hola, Prueba Android");
-    assertSyntheticActiveSessions(mobileUserId, 1);
-    passCase();
-
-    beginCase("Expo SDK 58 handles QA Web endpoint outage and recovers a safe read after restoration");
-    await verifyQaWebEndpointRecovery("Personas", mobileUserId);
-    passCase();
-
-    beginCase("Expo SDK 58 logout revokes its session across process restart");
-    stage("return-to-home-before-expo-logout");
-    await tapLabel("Volver al resumen");
-    await waitForNode("Hola, Prueba Android");
-    stage("logout-from-expo-ui");
-    await tapLabel("Cerrar sesi\u00f3n");
-    sessionObservations.afterUiLogout = await waitForAuthUiState();
-    assert(["login-required", "organization-selection"].includes(sessionObservations.afterUiLogout), "expo-logout-did-not-return-to-anonymous-ui");
-    assertSyntheticActiveSessions(mobileUserId, 0);
-    stage("expo-verify-logout-after-process-restart");
-    adb(["shell", "am", "force-stop", androidPackage]);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    launchQaApp();
-    sessionObservations.expoAfterLogoutForceStop = await waitForAuthUiState();
-    assert(["login-required", "organization-selection"].includes(sessionObservations.expoAfterLogoutForceStop), "expo-session-survived-logout-and-restart");
-    assertSyntheticActiveSessions(mobileUserId, 0);
-    passCase();
-
-    beginCase("Expo SDK 58 keeps empty login credentials on the login form");
-    await verifyEmptyLoginForm(mobileUserId, organizationCode);
-
-    result.passed = true;
-    result.message = "";
-    console.log("PASS Expo SDK 58 authenticated through isolated Gateway and real Mailpit MFA; viewer scope and logout verified");
-    return;
-  }
-
   beginCase("Android rejects an expired real MFA challenge without creating a session");
   stage("expire-only-the-pending-synthetic-login-challenge");
   const expiredChallengeId = expireSyntheticPendingLoginChallenge(mobileUserId);
@@ -854,9 +736,7 @@ async function run() {
   assertSyntheticActiveSessions(mobileUserId, 1);
   stage("verify-people-section");
   const viewerHomeNodes = uiNodes();
-  const peopleAction = isExpoClient
-    ? findNodeContaining(viewerHomeNodes, "Personas")
-    : findNode(viewerHomeNodes, "Consultar personas");
+  const peopleAction = findNode(viewerHomeNodes, "Consultar personas");
   sessionObservations.viewerCanConsultPeople = String(Boolean(peopleAction));
   sessionObservations.viewerRegisterAction = findNodeContaining(viewerHomeNodes, "Registrar persona") ? "visible" : "not-visible";
   assert(sessionObservations.viewerCanConsultPeople === "true", "viewer-people-read-action-not-visible");
@@ -1013,7 +893,7 @@ async function run() {
   await replaceField("Correo electr\u00f3nico", activeLoginEmail.length, activeLoginEmail);
   await typeField("Contrase\u00f1a", `${password}x`);
   await tapLabel("Ingresar");
-  await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
+  await waitForNode(rejectedLoginMessage);
   assert(authUiState(uiNodes()) === "login-required", "incorrect-password-opened-authenticated-flow");
   assertSyntheticActiveSessions(registrarUserId, 0);
   await assertNoFreshMfaMessage(activeLoginEmail, beforeWrongPassword);
@@ -1026,7 +906,7 @@ async function run() {
   await replaceField("Correo electr\u00f3nico", activeLoginEmail.length, missingEmail);
   await replaceField("Contrase\u00f1a", password.length + 1, password);
   await tapLabel("Ingresar");
-  await waitForNode(rejectedLoginMessage, {contains: isExpoClient});
+  await waitForNode(rejectedLoginMessage);
   assert(authUiState(uiNodes()) === "login-required", "nonexistent-account-opened-authenticated-flow");
   assertSyntheticActiveSessions(registrarUserId, 0);
   await assertNoFreshMfaMessage(activeLoginEmail, beforeMissingAccount);

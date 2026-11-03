@@ -6,16 +6,6 @@ const PROFILES = Object.freeze({
     expectedEmail: "android@srd-e2e.test",
     androidPackage: "com.srd.mobile.qa",
     homeLabel: "Hola, Prueba Android",
-    requiresServerField: false,
-  }),
-  expo: Object.freeze({
-    key: "expo",
-    client: "expo-android",
-    accountKey: "mobile_registrar_user",
-    expectedEmail: "android-registrar@srd-e2e.test",
-    androidPackage: "com.srd.mobileexpo",
-    homeLabel: "Hola, Prueba Android Registrador",
-    requiresServerField: true,
   }),
 });
 

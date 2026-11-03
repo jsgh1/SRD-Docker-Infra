@@ -6,7 +6,7 @@ const root = path.resolve(import.meta.dirname, '../..');
 const fixture = JSON.parse(fs.readFileSync(process.env.SRD_BROWSER_FIXTURE || path.join(root, '.local/e2e-fixture.json'), 'utf8'));
 const mailpit = process.env.SRD_MAILPIT_URL || 'http://localhost:8025';
 
-test('API real para el recorrido de Expo Go', async ({request}) => {
+test('API real para el cliente movil', async ({request}) => {
   const account = fixture.users.admin.email;
   const inboxBefore = await (await request.get(`${mailpit}/api/v1/messages`)).json();
   const previousIds = new Set((inboxBefore.messages || []).map(message => message.ID));

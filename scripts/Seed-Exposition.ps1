@@ -6,7 +6,7 @@ $SrdRunner = Join-Path $SrdRoot 'tools/browser-tests/seed-mobile-showcase.mjs'
 $SrdPlaywright = Join-Path $SrdRoot 'tools/browser-tests/node_modules/@playwright/test'
 
 if (-not (Test-Path -LiteralPath $SrdFixture)) {
-    throw 'Primero ejecuta Prepare-ExpoDemo.ps1 o Prepare-Demo.ps1 para crear las cuentas ficticias.'
+    throw 'Primero ejecuta Prepare-MobileDemo.ps1 o Prepare-Demo.ps1 para crear las cuentas ficticias.'
 }
 if (-not (Test-Path -LiteralPath $SrdPlaywright)) {
     if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
