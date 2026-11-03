@@ -92,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: fd5e0add40643543e9dd6b80f8da3ee10b4aea52
+          ref: df312f375159cd730e18c02027ec55efd767401f
           path: _backend
           persist-credentials: false
       - name: Assemble only Chat build inputs

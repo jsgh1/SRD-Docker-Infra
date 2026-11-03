@@ -5,21 +5,21 @@ on:
   workflow_dispatch:
     inputs:
       backend_sha:
-        description: Exact Backend revision
+        description: Exact Backend SHA at the approved source cut; refresh only in a reviewed cut
         required: true
-        default: fd5e0add40643543e9dd6b80f8da3ee10b4aea52
+        default: df312f375159cd730e18c02027ec55efd767401f
       frontend_sha:
-        description: Exact Frontend revision
+        description: Exact Frontend SHA at the approved source cut; refresh only in a reviewed cut
         required: true
-        default: fec562383858f671c166eb39716faae0149bf010
+        default: 158dcae1957d1b37025fcec137ada0b7b9f17984
       database_sha:
-        description: Exact Database revision
+        description: Exact Database SHA at the approved source cut; refresh only in a reviewed cut
         required: true
         default: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
       docs_sha:
-        description: Exact Docs revision
+        description: Exact Docs SHA at the approved source cut; refresh only in a reviewed cut
         required: true
-        default: 85456d13cc4f04ba1f4cea8d1178c45e30503a9c
+        default: 90675bed64469dd17157fa224cbb6fcc833a382c
       run_integration:
         description: Run isolated Docker and browser suite on a dedicated 32 GiB Windows runner
         required: true
@@ -35,16 +35,30 @@ jobs:
         with:
           path: sources/SRD-Docker-Infra
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate immutable source revisions
+        shell: bash
+        env:
+          BACKEND_SHA: ${{ inputs.backend_sha || 'df312f375159cd730e18c02027ec55efd767401f' }}
+          FRONTEND_SHA: ${{ inputs.frontend_sha || '158dcae1957d1b37025fcec137ada0b7b9f17984' }}
+          DATABASE_SHA: ${{ inputs.database_sha || 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33' }}
+          DOCS_SHA: ${{ inputs.docs_sha || '90675bed64469dd17157fa224cbb6fcc833a382c' }}
+        run: |
+          set -euo pipefail
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs
+          node --test sources/SRD-Docker-Infra/tools/validate-source-shas.test.mjs
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: ${{ inputs.backend_sha || 'fd5e0add40643543e9dd6b80f8da3ee10b4aea52' }}
+          ref: ${{ inputs.backend_sha || 'df312f375159cd730e18c02027ec55efd767401f' }}
           path: sources/SRD-Backend
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: ${{ inputs.frontend_sha || 'fec562383858f671c166eb39716faae0149bf010' }}
+          ref: ${{ inputs.frontend_sha || '158dcae1957d1b37025fcec137ada0b7b9f17984' }}
           path: sources/SRD-Frontend
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -56,23 +70,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Docs
-          ref: ${{ inputs.docs_sha || '85456d13cc4f04ba1f4cea8d1178c45e30503a9c' }}
+          ref: ${{ inputs.docs_sha || '90675bed64469dd17157fa224cbb6fcc833a382c' }}
           path: sources/SRD-Docs
           persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
           coverage: none
       - name: Assemble exact sources and preserve provenance
         shell: bash
+        env:
+          BACKEND_SHA: ${{ inputs.backend_sha || 'df312f375159cd730e18c02027ec55efd767401f' }}
+          FRONTEND_SHA: ${{ inputs.frontend_sha || '158dcae1957d1b37025fcec137ada0b7b9f17984' }}
+          DATABASE_SHA: ${{ inputs.database_sha || 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33' }}
+          DOCS_SHA: ${{ inputs.docs_sha || '90675bed64469dd17157fa224cbb6fcc833a382c' }}
+          INFRA_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs --check-provenance assembled/srd-provenance.json
           test -f assembled/srd-provenance.json
           test -f assembled/services/identity/artisan
           test -f assembled/apps/web/package.json
@@ -152,6 +170,7 @@ jobs:
           $project='srd-d8-ci-${{ github.run_id }}'
           if(docker ps -a --filter "label=com.docker.compose.project=$project" --format '{{.ID}}'){throw 'Project already exists'}
           if(docker volume ls --filter "name=$project" --format '{{.Name}}'){throw 'Project volumes already exist'}
+          if(docker network ls --filter "name=$project" --format '{{.Name}}'){throw 'Project network already exists'}
           $sources=@('--infra','sources/SRD-Docker-Infra','--backend','sources/SRD-Backend','--frontend','sources/SRD-Frontend','--database','sources/SRD-Database','--docs','sources/SRD-Docs')
           node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs @sources --dest assembled
           if($LASTEXITCODE){throw 'Assembly failed'}

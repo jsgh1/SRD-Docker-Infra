@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {assertOfficialGithubOrigin} from './github-origin.mjs';
 
 const names=['SRD-Docker-Infra','SRD-Backend','SRD-Frontend','SRD-Database','SRD-Docs'];
 const flags=new Map();
@@ -28,7 +29,7 @@ for(const [name,dir] of sources){
   const top=path.resolve(git(dir,'rev-parse','--show-toplevel'));
   if(top.toLowerCase()!==dir.toLowerCase())throw Error(`Not Git root: ${name}`);
   const remote=git(dir,'remote','get-url','origin');
-  if(!new RegExp(`(?:/|:)jsgh1/${name}(?:\\.git)?$`,'i').test(remote))throw Error(`Unexpected origin for ${name}`);
+  assertOfficialGithubOrigin(remote,name);
   const dirty=git(dir,'status','--porcelain').length>0;
   if(dirty&&!flags.has('--allow-dirty'))throw Error(`Dirty source: ${name}`);
   trackedFiles.set(name,new Set(execFileSync('git',['ls-files','-z'],{cwd:dir,stdio:['ignore','pipe','pipe']}).toString('utf8').split('\0').filter(Boolean)));
