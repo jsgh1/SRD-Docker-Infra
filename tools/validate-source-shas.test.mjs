@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { assertProvenanceMatches, sourceShaEnvironment, validateSourceShas } from './validate-source-shas.mjs';
+import { assertOfficialGithubOrigin, isOfficialGithubOrigin } from './github-origin.mjs';
+
+const repositoryNames = [
+  'SRD-Docker-Infra',
+  'SRD-Backend',
+  'SRD-Frontend',
+  'SRD-Database',
+  'SRD-Docs',
+];
 
 const environment = {
   BACKEND_SHA: '1'.repeat(40),
@@ -22,13 +35,62 @@ function createProvenance() {
     sources[repository] = {
       sha: environment[variable],
       dirty: false,
-      remote: `https://github.com/jsgh1/${repository}.git`,
+      remote: 'https://github.com/jsgh1/' + repository + '.git',
     };
   }
   return { sources };
 }
 
-test('accepts only full immutable revisions for all four component repositories', () => {
+function createSyntheticSources(tempRoot, backendOrigin) {
+  fs.mkdirSync(tempRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tempRoot, 'srd-p38-git-origin-'));
+  const files = {
+    'SRD-Docker-Infra': ['compose.yaml', 'docker/php.Dockerfile'],
+    'SRD-Backend': ['services/identity/artisan', 'packages/php/README.md', 'contracts/README.md'],
+    'SRD-Frontend': ['apps/web/package.json'],
+    'SRD-Database': ['database/03_dcl/01_grants/initialize-services.sh', 'services/README.md'],
+    'SRD-Docs': ['Entregables/PDF/README.md'],
+  };
+  const sources = {};
+  for (const repository of repositoryNames) {
+    const directory = path.join(root, repository);
+    fs.mkdirSync(directory, { recursive: true });
+    for (const relative of files[repository]) {
+      const file = path.join(directory, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, relative.endsWith('.json') ? '{"private":true}\n' : 'synthetic origin test\n');
+    }
+    execFileSync('git', ['init', '--quiet'], { cwd: directory });
+    const remote = repository === 'SRD-Backend' && backendOrigin
+      ? backendOrigin
+      : (repository === 'SRD-Docker-Infra' ? 'git@github.com:jsgh1/' + repository + '.git' : 'https://github.com/jsgh1/' + repository + '.git');
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: directory });
+    execFileSync('git', ['add', '-A'], { cwd: directory });
+    execFileSync('git', ['-c', 'user.name=SRD Origin Test', '-c', 'user.email=srd-origin-test@example.invalid', 'commit', '--quiet', '-m', 'synthetic origin test'], { cwd: directory });
+    sources[repository] = directory;
+  }
+  return { root, sources };
+}
+
+function runAssemblerCheck(sources) {
+  const repositoryRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const assembler = path.join(repositoryRoot, 'tools', 'assemble-workspace.mjs');
+  return spawnSync(process.execPath, [
+    assembler,
+    '--infra', sources['SRD-Docker-Infra'],
+    '--backend', sources['SRD-Backend'],
+    '--frontend', sources['SRD-Frontend'],
+    '--database', sources['SRD-Database'],
+    '--docs', sources['SRD-Docs'],
+    '--check',
+  ], { encoding: 'utf8' });
+}
+
+function testTempRoot() {
+  return process.env.P38_TEST_TEMP || os.tmpdir();
+}
+
+test('accepts full immutable revisions for all four component repositories', () => {
   assert.deepEqual(validateSourceShas(environment), {
     'SRD-Backend': environment.BACKEND_SHA,
     'SRD-Frontend': environment.FRONTEND_SHA,
@@ -45,7 +107,7 @@ test('rejects missing, branch-like, abbreviated, and non-hex revisions', () => {
   }
 });
 
-test('accepts provenance only when all five repositories match the pinned clean origins', () => {
+test('accepts provenance only when all five repositories match the pinned clean official origins', () => {
   assert.equal(assertProvenanceMatches(createProvenance(), validateSourceShas(environment), '5'.repeat(40)), true);
 });
 
@@ -65,7 +127,7 @@ test('rejects dirty or unexpected source repositories in provenance', () => {
   assert.throws(() => assertProvenanceMatches(dirty, validateSourceShas(environment), '5'.repeat(40)), /not clean/);
 
   const wrongRemote = createProvenance();
-  wrongRemote.sources['SRD-Database'].remote = 'https://github.com/other/SRD-Database.git';
+  wrongRemote.sources['SRD-Database'].remote = 'https://evil.example/jsgh1/SRD-Database.git';
   assert.throws(() => assertProvenanceMatches(wrongRemote, validateSourceShas(environment), '5'.repeat(40)), /Unexpected source repository identity/);
 });
 
@@ -92,12 +154,69 @@ test('keeps workflow defaults, checkout fallbacks, and guards on the same P36 cu
     '90675bed64469dd17157fa224cbb6fcc833a382c',
   ];
   for (const revision of approved) {
-    assert.equal((workflow.match(new RegExp(revision, 'g')) ?? []).length, 4, `${revision} must be consistent across the input, both validations, and checkout`);
+    assert.equal((workflow.match(new RegExp(revision, 'g')) ?? []).length, 4, revision + ' must be consistent across input, validations, and checkout');
   }
 });
 
-test('uses the same approved Backend cut in the required clean Reverb image check', () => {
+test('uses the approved Backend cut in the required clean Reverb image check', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/migration-compose-validation.yml', import.meta.url), 'utf8');
   assert.match(workflow, /repository: jsgh1\/SRD-Backend[\s\S]*?ref: df312f375159cd730e18c02027ec55efd767401f[\s\S]*?path: _backend/);
   assert.doesNotMatch(workflow, /ref: fd5e0add40643543e9dd6b80f8da3ee10b4aea52/);
+});
+
+test('accepts canonical HTTPS and SSH origins for each official repository only', () => {
+  for (const repository of repositoryNames) {
+    const sourcePath = 'jsgh1/' + repository;
+    for (const origin of [
+      'https://github.com/' + sourcePath,
+      'https://github.com/' + sourcePath + '.git',
+      'git@github.com:' + sourcePath,
+      'git@github.com:' + sourcePath + '.git',
+    ]) {
+      assert.equal(isOfficialGithubOrigin(origin, repository), true, repository + ': ' + origin);
+      assert.equal(assertOfficialGithubOrigin(origin, repository), true);
+    }
+  }
+});
+
+test('rejects hostile hosts, wrong owners, extra paths, and unexpected URL forms', () => {
+  const badOrigins = [
+    'https://evil.example/jsgh1/SRD-Backend.git',
+    'https://github.com.evil.example/jsgh1/SRD-Backend',
+    'https://github.com/other/SRD-Backend.git',
+    'https://github.com/jsgh1/SRD-Backend/extra',
+    'https://github.com/jsgh1/SRD-Frontend.git',
+    'http://github.com/jsgh1/SRD-Backend.git',
+    'ssh://git@github.com/jsgh1/SRD-Backend.git',
+    'https://user@github.com/jsgh1/SRD-Backend.git',
+    'https://github.com:8443/jsgh1/SRD-Backend.git',
+    'https://github.com/jsgh1/SRD-Backend.git?redirect=evil.example',
+    'https://github.com/jsgh1/SRD-Backend.git#fragment',
+    'https://github.com/jsgh1/SRD-Backend.git/../SRD-Backend.git',
+    'git@github.com.evil.example:jsgh1/SRD-Backend.git',
+    '',
+    undefined,
+  ];
+  for (const origin of badOrigins) {
+    assert.equal(isOfficialGithubOrigin(origin, 'SRD-Backend'), false, String(origin));
+    assert.throws(() => assertOfficialGithubOrigin(origin, 'SRD-Backend'), /Unexpected origin/);
+  }
+  assert.equal(isOfficialGithubOrigin('https://github.com/jsgh1/SRD-Backend.git', 'SRD-Other'), false);
+});
+
+test('the real assembler check accepts synthetic sources with official HTTPS and SSH origins', (t) => {
+  const fixture = createSyntheticSources(testTempRoot());
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+
+  const result = runAssemblerCheck(fixture.sources);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).mode, 'check');
+});
+
+test('the real assembler check rejects a lookalike hostile Git host', (t) => {
+  const fixture = createSyntheticSources(testTempRoot(), 'https://evil.example/jsgh1/SRD-Backend.git');
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const result = runAssemblerCheck(fixture.sources);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unexpected origin for SRD-Backend/);
 });

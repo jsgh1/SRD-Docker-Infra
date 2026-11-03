@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertOfficialGithubOrigin } from './github-origin.mjs';
 
 export const sourceShaEnvironment = Object.freeze({
   'SRD-Backend': 'BACKEND_SHA',
@@ -16,7 +17,7 @@ export function validateSourceShas(environment) {
   for (const [repository, variable] of Object.entries(sourceShaEnvironment)) {
     const value = environment[variable];
     if (typeof value !== 'string' || !shaPattern.test(value)) {
-      throw new Error(`${repository} must be pinned to an exact 40-character commit SHA (${variable}).`);
+      throw new Error(repository + ' must be pinned to an exact 40-character commit SHA (' + variable + ').');
     }
     revisions[repository] = value;
   }
@@ -32,13 +33,15 @@ export function assertProvenanceMatches(provenance, expected, expectedInfraSha) 
   for (const [repository, revision] of Object.entries(revisions)) {
     const source = provenance?.sources?.[repository];
     if (!source || source.sha !== revision) {
-      throw new Error(`Assembled provenance does not match the approved SHA for ${repository}.`);
+      throw new Error('Assembled provenance does not match the approved SHA for ' + repository + '.');
     }
     if (source.dirty !== false) {
-      throw new Error(`Assembled source is not clean: ${repository}.`);
+      throw new Error('Assembled source is not clean: ' + repository + '.');
     }
-    if (!new RegExp(`(?:/|:)jsgh1/${repository}(?:\\.git)?$`, 'i').test(source.remote ?? '')) {
-      throw new Error(`Unexpected source repository identity: ${repository}.`);
+    try {
+      assertOfficialGithubOrigin(source.remote, repository);
+    } catch {
+      throw new Error('Unexpected source repository identity: ' + repository + '.');
     }
   }
   return true;
