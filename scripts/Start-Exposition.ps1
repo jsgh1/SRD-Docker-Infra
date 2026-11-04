@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $SrdRoot = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $SrdRoot
 
-& (Join-Path $PSScriptRoot 'Prepare-ExpoDemo.ps1') -Build:$Build
+& (Join-Path $PSScriptRoot 'Prepare-MobileDemo.ps1') -Build:$Build
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar el entorno de exposición.' }
 
 if (-not $SkipSeed) {
@@ -31,14 +31,14 @@ Write-Host 'Cuenta: admin@srd-e2e.test'
 Write-Host 'Contraseña: campo password de .local/e2e-fixture.json'
 
 if ($WebOnly) {
-    Write-Host 'Web lista. Para abrir el móvil más tarde: ./scripts/Start-ExpoGo.ps1'
+    Write-Host 'Web lista. Para abrir el móvil más tarde: ./scripts/Start-Mobile.ps1'
     return
 }
 
-Write-Host 'Conecta y autoriza el teléfono Android por USB; Expo Go se abrirá automáticamente.'
+Write-Host 'Conecta y autoriza el telefono Android por USB; el script iniciara Metro para la app SRD nativa.'
 if ($AdbPath) {
-    & (Join-Path $PSScriptRoot 'Start-ExpoGo.ps1') -AdbPath $AdbPath
+    & (Join-Path $PSScriptRoot 'Start-Mobile.ps1') -AdbPath $AdbPath
 } else {
-    & (Join-Path $PSScriptRoot 'Start-ExpoGo.ps1')
+    & (Join-Path $PSScriptRoot 'Start-Mobile.ps1')
 }
-if ($LASTEXITCODE -ne 0) { throw 'No se pudo iniciar Expo Go.' }
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo iniciar la app movil nativa.' }

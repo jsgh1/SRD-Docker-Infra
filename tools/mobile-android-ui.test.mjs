@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   authUiState,
+  compareSecretEntry,
   decodeXml,
   editableValue,
   findNode,
@@ -46,6 +47,18 @@ test("treats native placeholders as empty while preserving non-sensitive typed l
     "Correo electrónico: hasText=true textLength=6 enabled=false focused=false",
   ]);
   assert.doesNotMatch(safeEditableStates(nodes).join("\n"), /viewer/);
+});
+
+test("compares a visible password in memory and emits only redacted mismatch metadata", () => {
+  const actual = "synthetic-password-value";
+  const expected = "synthetic-password-values";
+  const result = compareSecretEntry(actual, expected);
+  assert.deepEqual(result, {
+    matches: false,
+    detail: "expectedLength=25,actualLength=24,firstMismatchIndex=24",
+  });
+  assert.doesNotMatch(result.detail, /synthetic-password/);
+  assert.equal(compareSecretEntry(actual, actual).matches, true);
 });
 
 test("matches editable controls and classifies the authentication screen", () => {

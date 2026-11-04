@@ -44,6 +44,22 @@ export function editableValue(node, label = "") {
   return value;
 }
 
+export function compareSecretEntry(actual, expected) {
+  let firstMismatchIndex = -1;
+  const length = Math.min(actual.length, expected.length);
+  for (let index = 0; index < length; index += 1) {
+    if (actual[index] !== expected[index]) {
+      firstMismatchIndex = index;
+      break;
+    }
+  }
+  if (firstMismatchIndex === -1 && actual.length !== expected.length) firstMismatchIndex = length;
+  return {
+    matches: actual === expected,
+    detail: `expectedLength=${expected.length},actualLength=${actual.length},firstMismatchIndex=${firstMismatchIndex}`,
+  };
+}
+
 export function safeEditableStates(nodes) {
   return nodes
     .filter(isEditable)
