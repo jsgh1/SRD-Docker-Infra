@@ -241,7 +241,7 @@ jobs:
           }
           trap cleanup EXIT
           docker run -d --name srd-p44-gateway --network none -e APP_ENV=production -e APP_DEBUG=false -e APP_KEY=base64:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI= -e APP_URL=http://localhost -e SESSION_SECURE_COOKIE=true -e SESSION_DRIVER=file -e LOG_CHANNEL=stderr srd-gateway:p44-ci
-          docker exec srd-p44-gateway php -r '$app=require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); $cookie=app("cookie")->make("srd_ci","synthetic",1); $header=(string)$cookie; exit(config("session.secure")===true && $cookie->isSecure() && stripos($header,"; secure")!==false ? 0 : 1);'
+          docker exec srd-p44-gateway php -r 'require "vendor/autoload.php"; $app=require "bootstrap/app.php"; $kernel=$app->make(Illuminate\Contracts\Http\Kernel::class); $response=$kernel->handle(Illuminate\Http\Request::create("/up")); $cookie=app("cookie")->make("srd_ci","synthetic",1); $header=(string)$cookie; exit($response->getStatusCode()===200 && config("session.secure")===true && $cookie->isSecure() && stripos($header,"; secure")!==false ? 0 : 1);'
           success=false
           for attempt in $(seq 1 40); do
             if ! docker inspect -f '{{.State.Running}}' srd-p44-gateway | grep -qx true; then
