@@ -6,6 +6,9 @@ COPY apps/web ./
 RUN npm run build
 
 FROM nginx:stable-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
+ARG SRD_FRONTEND_REVISION=unknown
+ARG SRD_INFRA_REVISION=unknown
+LABEL org.opencontainers.image.title="SRD Web" org.opencontainers.image.source="https://github.com/jsgh1/SRD-Frontend" org.opencontainers.image.revision="${SRD_FRONTEND_REVISION}" io.srd.infra.revision="${SRD_INFRA_REVISION}"
 COPY docker/nginx-production.conf /etc/nginx/conf.d/default.conf
 COPY docker/nginx-locations.conf /etc/nginx/srd-locations.conf
 RUN sed -i 's/X-Forwarded-Proto \$scheme/X-Forwarded-Proto https/g' /etc/nginx/srd-locations.conf

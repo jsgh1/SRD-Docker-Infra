@@ -47,7 +47,7 @@ jobs:
               assert key == '${REVERB_APP_KEY:?Define REVERB_APP_KEY}', f'{name} must require its Reverb key from deployment configuration'
 
           caddy = Path('docker/Caddyfile.production').read_text()
-          assert 'header Strict-Transport-Security "max-age=31536000"' in caddy, 'Production HTTPS must include HSTS'
+          assert 'header >Strict-Transport-Security "max-age=31536000"' in caddy, 'Production HTTPS must include HSTS'
           print(f'PASS: {len(apps)} production apps disable debug; {len(session_apps)} session services use secure cookies; Reverb keys and HSTS are configured')
           PY
       - name: Validate download route and isolated release mount
@@ -95,6 +95,12 @@ jobs:
           ref: df312f375159cd730e18c02027ec55efd767401f
           path: _backend
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: _database
+          persist-credentials: false
       - name: Assemble only Chat build inputs
         shell: bash
         run: |
@@ -102,6 +108,7 @@ jobs:
           mkdir -p services packages
           cp -a _backend/services/chat services/chat
           cp -a _backend/packages/php packages/php
+          cp -a _database/services/. services/
           test -f services/chat/composer.lock
       - name: Build Chat image without local override
         run: docker build --build-arg SERVICE=chat -f docker/php.Dockerfile -t srd-reverb-ci:latest .
@@ -136,3 +143,183 @@ jobs:
           else:
               raise SystemExit("Reverb did not start from the clean image")
           PY
+  p44-static-contracts:
+    name: P44 production contracts and release manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run production configuration and release manifest tests
+        run: node --test tools/tests/production-compose.test.mjs tools/tests/release-manifest.test.mjs
+      - name: Validate generated release overlay with Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/release.json" <<'NODE'
+          const fs = require('node:fs');
+          const names = ['gateway', 'identity', 'configuration', 'records', 'audit', 'files', 'calendar', 'notifications', 'treasury', 'inventory', 'chat', 'web'];
+          const manifest = {
+            schemaVersion: 1,
+            releaseId: 'p44-compose-smoke',
+            sources: { backend: 'a'.repeat(40), database: 'd'.repeat(40), docs: 'e'.repeat(40), frontend: 'b'.repeat(40), infra: 'c'.repeat(40) },
+            images: Object.fromEntries(names.map((name, index) => [`${name}`, `registry.invalid/srd-${name}@sha256:${index.toString(16).repeat(64)}`])),
+          };
+          fs.writeFileSync(process.argv[2], JSON.stringify(manifest));
+          NODE
+          node scripts/render-release-compose.mjs "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release.compose.yaml"
+          docker compose -f compose.production.yaml -f "$RUNNER_TEMP/release.compose.yaml" config --no-interpolate --quiet
+      - name: Validate deferred HSTS and required transport secrets
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path('compose.production.yaml').read_text())
+          for name, service in config['services'].items():
+              if service.get('environment', {}).get('APP_ENV') == 'production' and 'SESSION_COOKIE' in service.get('environment', {}):
+                  assert service['environment'].get('SESSION_SECURE_COOKIE') == 'true', name
+          caddy = Path('docker/Caddyfile.production').read_text()
+          assert 'header >Strict-Transport-Security "max-age=31536000"' in caddy
+          for name in ('gateway', 'chat', 'chat-reverb'):
+              env = config['services'][name].get('environment', {})
+              assert env.get('REVERB_APP_KEY') == '${REVERB_APP_KEY:?Define REVERB_APP_KEY}', name
+              assert env.get('REVERB_APP_SECRET') == '${REVERB_APP_SECRET:?Ejecuta scripts/Initialize.ps1}', name
+          nginx = Path('docker/web-production.Dockerfile').read_text()
+          assert 'org.opencontainers.image.revision=' in nginx
+          assert 'io.srd.infra.revision=' in nginx
+          assert "s/X-Forwarded-Proto \\$scheme/X-Forwarded-Proto https/g" in nginx
+          print('PASS: secure cookies, required Reverb credentials, deferred HSTS, and HTTPS forwarded-proto boundary')
+          PY
+
+  p44-production-php-image:
+    name: P44 clean production PHP build and HTTP smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: df312f375159cd730e18c02027ec55efd767401f
+          path: _backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: _database
+          persist-credentials: false
+      - name: Assemble the pinned Gateway build inputs
+        run: |
+          set -euo pipefail
+          mkdir -p services packages
+          cp -a _backend/services/gateway services/gateway
+          cp -a _backend/packages/php packages/php
+          cp -a _database/services/. services/
+          test -s services/gateway/composer.lock
+          for service in audit calendar chat configuration files identity inventory notifications records treasury; do
+            find "services/$service/database/migrations" -maxdepth 1 -type f -name '*.php' | grep -q .
+          done
+      - name: Build the production Gateway image from clean sources
+        run: |
+          docker build --build-arg SERVICE=gateway --build-arg SRD_BACKEND_REVISION=df312f375159cd730e18c02027ec55efd767401f --build-arg SRD_DATABASE_REVISION=a96fc6e40e18c19adb6588362f53fb0c8bce5e33 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/php-production.Dockerfile -t srd-gateway:p44-ci .
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-gateway:p44-ci)" = df312f375159cd730e18c02027ec55efd767401f
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' srd-gateway:p44-ci)" = a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' srd-gateway:p44-ci)" = "$GITHUB_SHA"
+      - name: Start the isolated image and verify health and secure cookie serialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker logs srd-p44-gateway --tail 60 || true
+            docker rm -f srd-p44-gateway >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name srd-p44-gateway --network none -e APP_ENV=production -e APP_DEBUG=false -e APP_KEY=base64:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI= -e APP_URL=http://localhost -e SESSION_SECURE_COOKIE=true -e SESSION_DRIVER=file -e LOG_CHANNEL=stderr srd-gateway:p44-ci
+          docker exec srd-p44-gateway php -r 'require "vendor/autoload.php"; $app=require "bootstrap/app.php"; $kernel=$app->make(Illuminate\Contracts\Http\Kernel::class); $response=$kernel->handle(Illuminate\Http\Request::create("/up")); $cookie=app("cookie")->make("srd_ci","synthetic",1); $header=(string)$cookie; exit($response->getStatusCode()===200 && config("session.secure")===true && $cookie->isSecure() && stripos($header,"; secure")!==false ? 0 : 1);'
+          success=false
+          for attempt in $(seq 1 40); do
+            if ! docker inspect -f '{{.State.Running}}' srd-p44-gateway | grep -qx true; then
+              break
+            fi
+            if docker exec srd-p44-gateway php -r '$ctx=stream_context_create(["http"=>["ignore_errors"=>true,"timeout"=>2]]); $body=@file_get_contents("http://127.0.0.1:8000/up",false,$ctx); $status=$http_response_header[0]??""; exit($body!==false && str_contains($status,"200") ? 0 : 1);'; then
+              success=true
+              break
+            fi
+            sleep 2
+          done
+          test "$success" = true
+
+  p44-production-edge:
+    name: P44 isolated Caddy, Nginx and spoofed proto smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          path: _frontend
+          persist-credentials: false
+      - name: Assemble and build the production Web image
+        run: |
+          set -euo pipefail
+          mkdir -p apps
+          cp -a _frontend/apps/web apps/web
+          docker build --build-arg SRD_FRONTEND_REVISION=757af358ba0200f00646e95ab8a4eefbb75f62d1 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/web-production.Dockerfile -t srd-web:p44-ci .
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-web:p44-ci)" = 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' srd-web:p44-ci)" = "$GITHUB_SHA"
+      - name: Verify HTTPS, HSTS on an upstream error, and forwarded-proto spoof rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm -f srd-p44-caddy srd-p44-web srd-p44-gateway-mock >/dev/null 2>&1 || true
+            docker network rm srd-p44-edge >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create srd-p44-edge >/dev/null
+          cat > "$RUNNER_TEMP/gateway-mock.conf" <<'NGINX'
+          server {
+              listen 8000;
+              location / {
+                  default_type text/plain;
+                  return 503 "proto=$http_x_forwarded_proto";
+              }
+          }
+          NGINX
+          docker run -d --name srd-p44-gateway-mock \
+            --network srd-p44-edge --network-alias gateway \
+            -v "$RUNNER_TEMP/gateway-mock.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:stable-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
+          docker run -d --name srd-p44-web --network srd-p44-edge --network-alias web srd-web:p44-ci
+          docker run -d --name srd-p44-caddy --network srd-p44-edge \
+            -p 127.0.0.1:18443:443 \
+            -e SRD_DOMAIN=localhost \
+            -v "$PWD/docker/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+            --entrypoint caddy \
+            caddy:2@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af \
+            run --config /etc/caddy/Caddyfile
+          status=000
+          for attempt in $(seq 1 45); do
+            status=$(curl --silent --show-error --insecure --max-time 5 \
+              --header 'X-Forwarded-Proto: http' \
+              --dump-header "$RUNNER_TEMP/edge-headers.txt" \
+              --output "$RUNNER_TEMP/edge-body.txt" \
+              --write-out '%{http_code}' \
+              https://localhost:18443/api/p44-probe 2>/dev/null || true)
+            if [[ "$status" == 503 ]] && grep -qi '^Strict-Transport-Security: max-age=31536000' "$RUNNER_TEMP/edge-headers.txt" 2>/dev/null && grep -q 'proto=https' "$RUNNER_TEMP/edge-body.txt" 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          test "$status" = 503
+          grep -qi '^Strict-Transport-Security: max-age=31536000' "$RUNNER_TEMP/edge-headers.txt"
+          grep -q 'proto=https' "$RUNNER_TEMP/edge-body.txt"
