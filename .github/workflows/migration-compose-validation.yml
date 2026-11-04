@@ -153,7 +153,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: false
       - name: Run production configuration and release manifest tests
         run: node --test tools/tests/production-compose.test.mjs tools/tests/release-manifest.test.mjs
       - name: Validate generated release overlay with Compose
@@ -223,7 +222,9 @@ jobs:
           cp -a _backend/packages/php packages/php
           cp -a _database/services/. services/
           test -s services/gateway/composer.lock
-          find services/gateway/database/migrations -maxdepth 1 -type f -name '*.php' | grep -q .
+          for service in audit calendar chat configuration files identity inventory notifications records treasury; do
+            find "services/$service/database/migrations" -maxdepth 1 -type f -name '*.php' | grep -q .
+          done
       - name: Build the production Gateway image from clean sources
         run: |
           docker build --build-arg SERVICE=gateway --build-arg SRD_BACKEND_REVISION=df312f375159cd730e18c02027ec55efd767401f --build-arg SRD_DATABASE_REVISION=a96fc6e40e18c19adb6588362f53fb0c8bce5e33 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/php-production.Dockerfile -t srd-gateway:p44-ci .
@@ -303,6 +304,7 @@ jobs:
             -p 127.0.0.1:18443:443 \
             -e SRD_DOMAIN=localhost \
             -v "$PWD/docker/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+            --entrypoint caddy \
             caddy:2@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af \
             run --config /etc/caddy/Caddyfile
           status=000
