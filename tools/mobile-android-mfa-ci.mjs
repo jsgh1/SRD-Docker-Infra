@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   authUiState,
+  compareSecretEntry,
   decodeXml,
   editableValue,
   findNode,
@@ -31,6 +32,7 @@ let lastUiDetails = [];
 let lastEditableStates = [];
 let freshMfaMailObserved = "not-checked";
 let hostLoginDiagnostic = "not-run";
+let passwordInputDiagnostic = "not-checked";
 let failureScreenshot = "not-captured";
 const sessionObservations = {
   viewerCanConsultPeople: "not-checked",
@@ -314,10 +316,37 @@ async function replaceFieldWithCurrentValue(label, value) {
   const field = await waitForEditableFieldOnScreen(label);
   const previousLength = editableValue(field, label).length;
   tapNode(field);
-  if (previousLength) adb(["shell", "input", "keyevent", "123", ...Array(previousLength).fill("67")]);
+  const isSensitive = /contraseña|password/i.test(label);
+  const deleteCount = isSensitive ? Math.max(previousLength, 96) : previousLength;
+  if (deleteCount) adb(["shell", "input", "keyevent", "123", ...Array(deleteCount).fill("67")]);
   if (value) adb(["shell", "input", "text", value]);
   adb(["shell", "input", "keyevent", "111"]);
   await waitForFieldValue(label, value);
+}
+
+async function verifySecretField(label, expected) {
+  await tapLabel("Mostrar contraseña");
+  let actual;
+  try {
+    actual = editableValue(findNode(uiNodes(), label, {editable: true}), label);
+  } finally {
+    await tapLabel("Ocultar contraseña");
+  }
+  let comparison = compareSecretEntry(actual, expected);
+  if (!comparison.matches) {
+    // Retry once after clearing beyond the reported input length. The fixture password is
+    // synthetic hex, so adb input text needs no shell escaping; comparison output is redacted.
+    await replaceFieldWithCurrentValue(label, expected);
+    await tapLabel("Mostrar contraseña");
+    try {
+      actual = editableValue(findNode(uiNodes(), label, {editable: true}), label);
+    } finally {
+      await tapLabel("Ocultar contraseña");
+    }
+    comparison = compareSecretEntry(actual, expected);
+  }
+  passwordInputDiagnostic = `matches=${comparison.matches},${comparison.detail}`;
+  assert(comparison.matches, "android-password-input-does-not-match-fixture");
 }
 
 async function ensureOrganizationTermsAccepted() {
@@ -732,10 +761,7 @@ async function run() {
   await replaceFieldWithCurrentValue("Correo electr\u00f3nico", email);
   await replaceFieldWithCurrentValue("Contrase\u00f1a", password);
   stage("verify-fixture-password-entry");
-  await tapLabel("Mostrar contrase\u00f1a");
-  const visiblePasswordField = findNode(uiNodes(), "Contrase\u00f1a", {editable: true});
-  assert(editableValue(visiblePasswordField, "Contrase\u00f1a") === password, "android-password-input-does-not-match-fixture");
-  await tapLabel("Ocultar contrase\u00f1a");
+  await verifySecretField("Contrase\u00f1a", password);
   stage("submit-login");
   await tapLabel("Ingresar");
   stage("wait-for-real-mfa-challenge");
@@ -1001,6 +1027,11 @@ try {
   if (memoryInterval) clearInterval(memoryInterval);
   if (!result.passed && selectedSerial) {
     try {
+      if (findNode(uiNodes(), "Ocultar contraseña")) await tapLabel("Ocultar contraseña");
+    } catch {
+      // Continue with failure capture; no secret value is written to logs or accessibility diagnostics.
+    }
+    try {
       const png = execFileSync("adb", ["-s", selectedSerial, "exec-out", "screencap", "-p"], {
         timeout: 15000, maxBuffer: 16 * 1024 * 1024,
       });
@@ -1016,7 +1047,7 @@ try {
   }
   fs.mkdirSync(path.dirname(resourcesPath), { recursive: true });
   const minGiB = Number.isFinite(minimumAvailableKiB) ? (minimumAvailableKiB / 1024 / 1024).toFixed(2) : "unavailable";
-  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nHostLoginDiagnostic: ${hostLoginDiagnostic}\nFailureScreenshot: ${failureScreenshot}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
+  const uiDiagnostics = result.passed ? "" : `FailureStage: ${currentStage}\nFreshMfaMailObserved: ${freshMfaMailObserved}\nHostLoginDiagnostic: ${hostLoginDiagnostic}\nPasswordInputDiagnostic: ${passwordInputDiagnostic}\nFailureScreenshot: ${failureScreenshot}\nVisibleLabels:\n${lastUiLabels.map((label) => `- ${label}`).join("\n")}\nVisibleNodeDetails:\n${lastUiDetails.map((detail) => `- ${detail}`).join("\n")}\nEditableStates:\n${lastEditableStates.map((state) => `- ${state}`).join("\n")}\n`;
   const sessionDiagnostics = Object.entries(sessionObservations).map(([key, value]) => `${key}: ${value}`).join("\n");
   fs.writeFileSync(resourcesPath, `Samples: ${memorySampleCount}\nMinimumMemAvailableGiB: ${minGiB}\nSafeFloorGiB: 2.00\n${sessionDiagnostics}\n${uiDiagnostics}`);
   writeJUnit();
