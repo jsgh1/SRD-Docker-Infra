@@ -277,3 +277,5 @@ El comprobador `tools/check-mysql-isolation.php` intenta leer cada esquema exter
 ---
 
 **Orquestador:** [jsgh1/SRD-Docker-Infra](https://github.com/jsgh1/SRD-Docker-Infra) · **Entrega documental:** [SRD-Docs](https://github.com/jsgh1/SRD-Docs/tree/dev).
+
+La guía de versión de imágenes y rollback seguro está en [`docs/production-release-rollback.md`](docs/production-release-rollback.md). El overlay es optativo; el Compose vigente conserva sus etiquetas actuales.
