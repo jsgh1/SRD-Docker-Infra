@@ -287,6 +287,26 @@ test "$fk_rows" = 1
 while IFS= read -r metadata; do log "PASS Files FK metadata: $metadata"; done < "$fk_metadata_file"
 log 'PASS: the single-column Files FK resolves blob_id to file_garbage.blob_id with matching type, length, charset, collation, InnoDB engine and ordinal position.'
 
+files_probe_db=p48_files_photo_probe
+photo_storage_dir="$work/files-photo-storage"
+photo_storage_log="$work/files-photo-storage.log"
+mkdir -p "$photo_storage_dir"
+mysql_exec "$source_name" "$source_password" --execute "CREATE DATABASE $files_probe_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+if ! docker run --rm --network p47-source --name p47-files-photo-storage \
+    -e FILES_TEST_DB_HOST=p47-source-mysql -e FILES_TEST_DB_DATABASE="$files_probe_db" \
+    -e FILES_TEST_DB_USERNAME=root -e FILES_TEST_DB_PASSWORD="$source_password" \
+    -e FILES_TEST_STORAGE_DIR=/p48-files-photo-storage \
+    -v "$P47_ASSEMBLED:/p48:ro" -v "$photo_storage_dir:/p48-files-photo-storage" \
+    -w /p48/tools "$(fpm_image files)" php check-photo-storage.php > "$photo_storage_log" 2>&1; then
+    sed "s/$source_password/[REDACTED]/g" "$photo_storage_log" | tail -n 80 >&2
+    exit 1
+fi
+test -s "$photo_storage_dir/results.json"
+node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if(!Number.isInteger(r.passed)||r.passed<1||r.failed!==0) process.exit(1); console.log(`PASS: Files storage behavior ${r.passed}/${r.passed+r.failed}; isolated synthetic MySQL and object storage.`)' "$photo_storage_dir/results.json"
+mysql_exec "$source_name" "$source_password" --execute "DROP DATABASE $files_probe_db"
+cp "$photo_storage_dir/results.json" "$artifact_dir/files-photo-storage-results.json"
+log 'PASS: Files photo storage regression covered synthetic persistence, tenant isolation, authorization, versioning, quota, cleanup, concurrency and purge behavior with a controlled scanner double.'
+
 log 'Evaluating FastCGI east-west reachability on an isolated simulation of the shared production Compose internal network.'
 shared_network=p47-shared-simulation
 docker network create --internal "$shared_network" >/dev/null

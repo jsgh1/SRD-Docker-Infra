@@ -1,13 +1,22 @@
 <?php
 foreach(['ImageRejected','ScannerUnavailable','Scanner','ClamdScanner','ImageGate','PhotoConflict','PhotoNotFound','PhotoQuotaExceeded','PhotoStorage','AssetPhotoStorage','PhotoStore'] as $c)require __DIR__.'/../services/files/app/'.$c.'.php';
 use SrdFiles\{Scanner, ImageGate, PhotoStore, PhotoConflict, PhotoNotFound, PhotoQuotaExceeded};
-function connection():PDO{return new PDO('mysql:host=mysql;dbname=srd_files_probe;charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);}
+function connection():PDO
+{
+    $host=getenv('FILES_TEST_DB_HOST')?:'mysql';
+    $database=getenv('FILES_TEST_DB_DATABASE')?:'srd_files_probe';
+    $username=getenv('FILES_TEST_DB_USERNAME')?:'root';
+    $password=getenv('FILES_TEST_DB_PASSWORD')?:'';
+    return new PDO("mysql:host=$host;dbname=$database;charset=utf8mb4",$username,$password,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+}
 function expect(bool $ok,string $message='Comprobación fallida'):void{if(!$ok)throw new RuntimeException($message);}
 function rejects(callable $f,string $type):void{try{$f();}catch(Throwable $e){expect($e instanceof $type,get_class($e).': '.$e->getMessage());return;}throw new RuntimeException('Faltó rechazo: '.$type);}
 $db=connection();$db->exec(file_get_contents(__DIR__.'/../services/files/database/schema.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/asset-photos.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/deleted-persons.mysql.sql'));
-$base=realpath(__DIR__.'/..').'/.local/photo-storage';$root=$base.'/run-'.bin2hex(random_bytes(12));
+$base=getenv('FILES_TEST_STORAGE_DIR')?:realpath(__DIR__.'/..').'/.local/photo-storage';
+if(!is_dir($base)&&!mkdir($base,0700,true))throw new RuntimeException('No se pudo preparar el almacenamiento temporal.');
+$root=$base.'/run-'.bin2hex(random_bytes(12));
 mkdir($root,0700);mkdir($root.'/objects',0700);mkdir($root.'/quarantine',0700);
 $scanner=new class implements Scanner{public function assertClean(string $path):void{}};
 $gate=new ImageGate($root.'/quarantine',$scanner);
