@@ -322,7 +322,7 @@ remove_container p47-isolated-records-fpm
 expected_source_migrations=72
 expected_applied_migrations=58
 if [[ "$files_migration_blocked" == false ]]; then expected_applied_migrations=72; fi
-actual_migrations="$(find "$P47_ASSEMBLED/services" -mindepth 5 -maxdepth 5 -type f -path '*/database/migrations/*.php' | wc -l | tr -d ' ')"
+actual_migrations="$(find "$P47_ASSEMBLED/services" -type f -path '*/database/migrations/*.php' | wc -l | tr -d ' ')"
 test "$actual_migrations" = "$expected_source_migrations"
 test "$(mysql_exec "$source_name" "$source_password" --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='srd_gateway'")" = 0
 migrated_total=0
