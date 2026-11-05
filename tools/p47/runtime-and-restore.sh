@@ -235,10 +235,10 @@ for service in "${services[@]}"; do
         fi
     fi
     if [[ "$service" == chat ]]; then test_reverb; fi
-    if [[ "$service" != gateway && "$service" != records && "$service" != chat ]]; then
-        docker image rm "$(nginx_image "$service")" "$(fpm_image "$service")" >/dev/null
-    elif [[ "$service" != gateway ]]; then
+    if [[ "$service" == chat ]]; then
         docker image rm "$(nginx_image "$service")" >/dev/null
+    elif [[ "$service" != gateway && "$service" != records ]]; then
+        docker image rm "$(nginx_image "$service")" "$(fpm_image "$service")" >/dev/null
     fi
     check_resources
 done
@@ -271,13 +271,53 @@ for attempt in $(seq 1 30); do
     fi
     sleep 1
 done
-if [[ "$reachable" == true ]]; then
-    log 'RISK CONFIRMED: a sibling on the shared internal network can open Records FastCGI TCP/9000 while 9000 is unpublished to the host. Internal membership alone does not isolate the protocol.'
-else
-    log 'PASS: simulated shared internal network denied Gateway-to-Records FastCGI TCP/9000.'
+if [[ "$reachable" != true ]]; then
+    log 'ERROR: the shared-network simulation did not reproduce the expected FastCGI reachability finding.'
+    exit 1
 fi
+log 'FINDING CONFIRMED (expected): a sibling on the shared internal network can open Records FastCGI TCP/9000 while 9000 is unpublished to the host. This remains an unresolved production-topology risk.'
 remove_container p47-shared-gateway
 remove_container p47-shared-records
+
+log 'Testing an isolated candidate topology: each FPM stays on its service network; Nginx also joins a shared HTTP-only network.'
+gateway_private=p47-gateway-private
+records_private=p47-records-private
+service_http=p47-service-http
+for network in "$gateway_private" "$records_private" "$service_http"; do
+    docker network create --internal "$network" >/dev/null
+    networks+=("$network")
+done
+for network in "$gateway_private" "$records_private"; do
+    docker network connect --alias p47-source-mysql "$network" "$source_name"
+done
+docker run -d --name p47-isolated-records-fpm --network "$records_private" --network-alias records-fpm \
+    "${app_env[@]}" -e DB_DATABASE=srd_records -e DB_PASSWORD="$source_password" \
+    "$(fpm_image records)" >/dev/null
+containers+=(p47-isolated-records-fpm)
+docker run -d --name p47-isolated-gateway-fpm --network "$gateway_private" \
+    "${app_env[@]}" -e DB_DATABASE=srd_gateway -e DB_PASSWORD="$source_password" \
+    "$(fpm_image gateway)" >/dev/null
+containers+=(p47-isolated-gateway-fpm)
+docker network connect "$service_http" p47-isolated-gateway-fpm
+docker run -d --name p47-isolated-records-nginx --network "$records_private" \
+    "$(nginx_image records)" >/dev/null
+containers+=(p47-isolated-records-nginx)
+docker network connect --alias records-http "$service_http" p47-isolated-records-nginx
+test -z "$(docker port p47-isolated-records-fpm 9000/tcp || true)"
+records_ip="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$records_private\"}}{{.IPAddress}}{{end}}" p47-isolated-records-fpm)"
+test -n "$records_ip"
+docker exec p47-isolated-gateway-fpm php -r '$s=@fsockopen($argv[1],9000,$e,$m,2); if($s){fclose($s);exit(1);} exit(0);' "$records_ip"
+docker exec p47-isolated-gateway-fpm php -r '
+$s=@stream_socket_client("tcp://records-http:8000",$errno,$error,5);
+if(!$s){fwrite(STDERR,"HTTP-only service route unavailable: $error\n");exit(1);}
+fwrite($s,"GET /up HTTP/1.1\r\nHost: records\r\nConnection: close\r\n\r\n");
+$response=stream_get_contents($s);fclose($s);
+if(!preg_match("/^HTTP\\/1\\.[01] 200\\b/m",$response)){fwrite(STDERR,substr($response,0,500));exit(1);}
+'
+log 'PASS: candidate per-service networks deny Gateway-to-Records FastCGI by Records IP while allowing Gateway-to-Records HTTP /up through the Records Nginx endpoint.'
+remove_container p47-isolated-gateway-fpm
+remove_container p47-isolated-records-nginx
+remove_container p47-isolated-records-fpm
 
 expected_source_migrations=72
 expected_applied_migrations=58
