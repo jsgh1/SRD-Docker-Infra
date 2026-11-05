@@ -2,7 +2,7 @@ name: P20 isolated MFA HTTP and Android diagnostics
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [dev, qa, main]
     paths:
       - '.github/workflows/p20-mfa-http-diagnostic.yml'
       - 'tools/p20-mfa-http-diagnostic.mjs'
@@ -51,28 +51,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: 4937742c3d7cc52c7d0574f14bcfc28d7d332e98
+          ref: aab473c769a9e7e29fc78f33a0694121f67dd715
           path: sources/SRD-Backend
           persist-credentials: false
 
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: 91fc887de887cd7abf273d4660c123849b8fa8a8
+          ref: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
           path: sources/SRD-Frontend
           persist-credentials: false
 
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Database
-          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          ref: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           path: sources/SRD-Database
           persist-credentials: false
 
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Docs
-          ref: 85456d13cc4f04ba1f4cea8d1178c45e30503a9c
+          ref: 14317523566e27d46bbc152fc1627cf1807f77f4
           path: sources/SRD-Docs
           persist-credentials: false
 
@@ -123,10 +123,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C sources/SRD-Backend rev-parse HEAD)" = '4937742c3d7cc52c7d0574f14bcfc28d7d332e98'
-          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = '91fc887de887cd7abf273d4660c123849b8fa8a8'
-          test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33'
-          test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '85456d13cc4f04ba1f4cea8d1178c45e30503a9c'
+          test "$(git -C sources/SRD-Backend rev-parse HEAD)" = 'aab473c769a9e7e29fc78f33a0694121f67dd715'
+          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'bc455e353cfdc0cf280911808a5ecb7dcf488cb0'
+          test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'c396bde6e37f6be1b2f7566be3df010d947e9fe7'
+          test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '14317523566e27d46bbc152fc1627cf1807f77f4'
           node --check sources/SRD-Docker-Infra/tools/p20-mfa-http-diagnostic.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-sanitized-proxy.mjs
           node --check sources/SRD-Docker-Infra/tools/p20-android-auth-ci.mjs

@@ -1,7 +1,7 @@
 name: Migration Compose validation
 on:
   pull_request:
-    branches: [dev]
+    branches: [dev, qa, main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -92,13 +92,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: df312f375159cd730e18c02027ec55efd767401f
+          ref: aab473c769a9e7e29fc78f33a0694121f67dd715
           path: _backend
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Database
-          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          ref: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           path: _database
           persist-credentials: false
       - name: Assemble only Chat build inputs
@@ -205,13 +205,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Backend
-          ref: df312f375159cd730e18c02027ec55efd767401f
+          ref: aab473c769a9e7e29fc78f33a0694121f67dd715
           path: _backend
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Database
-          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          ref: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           path: _database
           persist-credentials: false
       - name: Assemble the pinned Gateway build inputs
@@ -227,9 +227,9 @@ jobs:
           done
       - name: Build the production Gateway image from clean sources
         run: |
-          docker build --build-arg SERVICE=gateway --build-arg SRD_BACKEND_REVISION=df312f375159cd730e18c02027ec55efd767401f --build-arg SRD_DATABASE_REVISION=a96fc6e40e18c19adb6588362f53fb0c8bce5e33 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/php-production.Dockerfile -t srd-gateway:p44-ci .
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-gateway:p44-ci)" = df312f375159cd730e18c02027ec55efd767401f
-          test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' srd-gateway:p44-ci)" = a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          docker build --build-arg SERVICE=gateway --build-arg SRD_BACKEND_REVISION=aab473c769a9e7e29fc78f33a0694121f67dd715 --build-arg SRD_DATABASE_REVISION=c396bde6e37f6be1b2f7566be3df010d947e9fe7 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/php-production.Dockerfile -t srd-gateway:p44-ci .
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-gateway:p44-ci)" = aab473c769a9e7e29fc78f33a0694121f67dd715
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' srd-gateway:p44-ci)" = c396bde6e37f6be1b2f7566be3df010d947e9fe7
           test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' srd-gateway:p44-ci)" = "$GITHUB_SHA"
       - name: Start the isolated image and verify health and secure cookie serialization
         shell: bash
@@ -265,7 +265,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jsgh1/SRD-Frontend
-          ref: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          ref: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
           path: _frontend
           persist-credentials: false
       - name: Assemble and build the production Web image
@@ -273,8 +273,8 @@ jobs:
           set -euo pipefail
           mkdir -p apps
           cp -a _frontend/apps/web apps/web
-          docker build --build-arg SRD_FRONTEND_REVISION=757af358ba0200f00646e95ab8a4eefbb75f62d1 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/web-production.Dockerfile -t srd-web:p44-ci .
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-web:p44-ci)" = 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          docker build --build-arg SRD_FRONTEND_REVISION=bc455e353cfdc0cf280911808a5ecb7dcf488cb0 --build-arg SRD_INFRA_REVISION="$GITHUB_SHA" -f docker/web-production.Dockerfile -t srd-web:p44-ci .
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' srd-web:p44-ci)" = bc455e353cfdc0cf280911808a5ecb7dcf488cb0
           test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' srd-web:p44-ci)" = "$GITHUB_SHA"
       - name: Verify HTTPS, HSTS on an upstream error, and forwarded-proto spoof rejection
         shell: bash

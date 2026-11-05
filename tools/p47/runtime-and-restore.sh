@@ -196,13 +196,42 @@ docker network create --internal "$source_network" >/dev/null
 networks+=("$source_network")
 docker run -d --name "$source_name" --network "$source_network" --network-alias p47-source-mysql \
     -e MYSQL_ROOT_PASSWORD="$source_password" "$P47_MYSQL_IMAGE" \
-    --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci >/dev/null
+    --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci >/dev/null
 containers+=("$source_name")
 mysql_ready "$source_name" "$source_password"
 for database in "${databases[@]}"; do
-    mysql_exec "$source_name" "$source_password" --execute "CREATE DATABASE $database CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+    mysql_exec "$source_name" "$source_password" --execute "CREATE DATABASE $database CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 done
 log 'PASS: isolated non-persistent MySQL 8.4 fixture started with 11 empty synthetic SRD schemas.'
+
+backend_schema="$P47_ASSEMBLED/services/files/database/schema.mysql.sql"
+database_migration="$P47_ASSEMBLED/services/files/database/migrations/2026_10_14_000002_erased_person_blob_tracking.php"
+backend_db_config="$P47_ASSEMBLED/services/files/config/database.php"
+test -s "$backend_schema" && test -s "$database_migration" && test -s "$backend_db_config"
+grep -F 'CREATE TABLE file_garbage (' "$backend_schema" >/dev/null
+grep -F 'blob_id CHAR(48) PRIMARY KEY' "$backend_schema" >/dev/null
+grep -F "\$table->char('blob_id', 48)->primary()" "$database_migration" >/dev/null
+grep -F "\$table->foreign('blob_id')->references('blob_id')->on('file_garbage')->cascadeOnDelete()" "$database_migration" >/dev/null
+grep -F "'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci')" "$backend_db_config" >/dev/null
+log "Provenance: Backend $P47_BACKEND_SHA owns file_garbage schema and declares utf8mb4_unicode_ci; Database $P47_DATABASE_SHA owns the erased-person FK migration."
+
+probe=srd_p48_files_collation_probe
+mysql_exec "$source_name" "$source_password" --execute "CREATE DATABASE $probe CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+mysql_exec "$source_name" "$source_password" --execute "CREATE TABLE $probe.file_garbage (blob_id CHAR(48) PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE $probe.file_deleted_person_blobs (blob_id CHAR(48) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY) ENGINE=InnoDB"
+probe_metadata="$work/files-fk-collation-probe.txt"
+mysql_exec "$source_name" "$source_password" --batch --skip-column-names --execute "SELECT CONCAT(c.table_name,'|',c.column_name,'|',c.column_type,'|',c.character_set_name,'|',c.collation_name,'|',t.engine) FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema=c.table_schema AND t.table_name=c.table_name WHERE c.table_schema='$probe' AND c.table_name IN ('file_garbage','file_deleted_person_blobs') AND c.column_name='blob_id' ORDER BY c.table_name" > "$probe_metadata"
+test "$(wc -l < "$probe_metadata" | tr -d ' ')" = 2
+grep -Fx 'file_deleted_person_blobs|blob_id|char(48)|utf8mb4|utf8mb4_unicode_ci|InnoDB' "$probe_metadata" >/dev/null
+grep -Fx 'file_garbage|blob_id|char(48)|utf8mb4|utf8mb4_0900_ai_ci|InnoDB' "$probe_metadata" >/dev/null
+if mysql_exec "$source_name" "$source_password" --execute "ALTER TABLE $probe.file_deleted_person_blobs ADD CONSTRAINT file_deleted_person_blobs_blob_id_foreign FOREIGN KEY (blob_id) REFERENCES $probe.file_garbage(blob_id) ON DELETE CASCADE" > "$work/files-fk-collation-probe.log" 2>&1; then
+    echo 'The controlled 0900/unicode collation mismatch unexpectedly accepted the Files FK.' >&2
+    exit 1
+fi
+grep -F '3780' "$work/files-fk-collation-probe.log" >/dev/null
+grep -F 'file_deleted_person_blobs_blob_id_foreign' "$work/files-fk-collation-probe.log" >/dev/null
+while IFS= read -r metadata; do log "CONTROLLED MySQL 8.4 collation probe: $metadata"; done < "$probe_metadata"
+log 'PASS: a synthetic MySQL 8.4 probe reproduced error 3780 solely with the P47 0900 schema collation versus Laravel unicode_ci connection collation, with matching CHAR(48), utf8mb4 and InnoDB.'
+mysql_exec "$source_name" "$source_password" --execute "DROP DATABASE $probe"
 
 files_migration_blocked=false
 for service in "${services[@]}"; do
@@ -216,7 +245,7 @@ for service in "${services[@]}"; do
                 exit 1
             fi
             mysql_exec "$source_name" "$source_password" --execute \
-                'DROP DATABASE srd_files; CREATE DATABASE srd_files CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci'
+                'DROP DATABASE srd_files; CREATE DATABASE srd_files CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
             files_migration_blocked=true
             log 'BLOCKED: Files migrations stop at file_deleted_person_blobs_blob_id_foreign (MySQL 8.4 error 3780); reset only the synthetic Files schema to empty and continue independent runtime checks.'
         fi
@@ -237,11 +266,47 @@ for service in "${services[@]}"; do
     if [[ "$service" == chat ]]; then test_reverb; fi
     if [[ "$service" == chat ]]; then
         docker image rm "$(nginx_image "$service")" >/dev/null
-    elif [[ "$service" != gateway && "$service" != records ]]; then
+    elif [[ "$service" != gateway && "$service" != records && "$service" != files ]]; then
         docker image rm "$(nginx_image "$service")" "$(fpm_image "$service")" >/dev/null
     fi
     check_resources
 done
+
+if [[ "$files_migration_blocked" == true ]]; then
+    log 'FAIL: Files migrations or its scheduler did not complete; the P48 candidate is not promotable.'
+    exit 1
+fi
+
+fk_metadata_file="$work/files-fk-metadata.txt"
+mysql_exec "$source_name" "$source_password" --batch --skip-column-names --execute "SELECT CONCAT(c.table_name,'|',c.column_name,'|',c.column_type,'|',c.character_set_name,'|',c.collation_name,'|',t.engine) FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema=c.table_schema AND t.table_name=c.table_name WHERE c.table_schema='srd_files' AND c.table_name IN ('file_garbage','file_deleted_person_blobs') AND c.column_name='blob_id' ORDER BY c.table_name" > "$fk_metadata_file"
+test "$(wc -l < "$fk_metadata_file" | tr -d ' ')" = 2
+grep -Fx 'file_deleted_person_blobs|blob_id|char(48)|utf8mb4|utf8mb4_unicode_ci|InnoDB' "$fk_metadata_file" >/dev/null
+grep -Fx 'file_garbage|blob_id|char(48)|utf8mb4|utf8mb4_unicode_ci|InnoDB' "$fk_metadata_file" >/dev/null
+fk_rows="$(mysql_exec "$source_name" "$source_password" --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.key_column_usage WHERE constraint_schema='srd_files' AND table_name='file_deleted_person_blobs' AND constraint_name='file_deleted_person_blobs_blob_id_foreign' AND column_name='blob_id' AND referenced_table_name='file_garbage' AND referenced_column_name='blob_id' AND ordinal_position=1")"
+test "$fk_rows" = 1
+while IFS= read -r metadata; do log "PASS Files FK metadata: $metadata"; done < "$fk_metadata_file"
+log 'PASS: the single-column Files FK resolves blob_id to file_garbage.blob_id with matching type, length, charset, collation, InnoDB engine and ordinal position.'
+
+files_probe_db=p48_files_photo_probe
+photo_storage_dir="$work/files-photo-storage"
+photo_storage_log="$work/files-photo-storage.log"
+mkdir -p "$photo_storage_dir"
+mysql_exec "$source_name" "$source_password" --execute "CREATE DATABASE $files_probe_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+if ! docker run --rm --network p47-source --name p47-files-photo-storage \
+    -e FILES_TEST_DB_HOST=p47-source-mysql -e FILES_TEST_DB_DATABASE="$files_probe_db" \
+    -e FILES_TEST_DB_USERNAME=root -e FILES_TEST_DB_PASSWORD="$source_password" \
+    -e FILES_TEST_STORAGE_DIR=/p48-files-photo-storage \
+    -v "$P47_ASSEMBLED:/p48:ro" -v "$photo_storage_dir:/p48-files-photo-storage" \
+    -w /p48/tools "$(fpm_image files)" php check-photo-storage.php > "$photo_storage_log" 2>&1; then
+    sed "s/$source_password/[REDACTED]/g" "$photo_storage_log" | tail -n 80 >&2
+    exit 1
+fi
+test -s "$photo_storage_dir/results.json"
+node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if(!Number.isInteger(r.passed)||r.passed<1||r.failed!==0) process.exit(1); console.log(`PASS: Files storage behavior ${r.passed}/${r.passed+r.failed}; isolated synthetic MySQL and object storage.`)' "$photo_storage_dir/results.json"
+mysql_exec "$source_name" "$source_password" --execute "DROP DATABASE $files_probe_db"
+cp "$photo_storage_dir/results.json" "$artifact_dir/files-photo-storage-results.json"
+docker image rm "$(nginx_image files)" "$(fpm_image files)" >/dev/null
+log 'PASS: Files photo storage regression covered synthetic persistence, tenant isolation, authorization, versioning, quota, cleanup, concurrency and purge behavior with a controlled scanner double.'
 
 log 'Evaluating FastCGI east-west reachability on an isolated simulation of the shared production Compose internal network.'
 shared_network=p47-shared-simulation
@@ -320,8 +385,8 @@ remove_container p47-isolated-records-nginx
 remove_container p47-isolated-records-fpm
 
 expected_source_migrations=72
-expected_applied_migrations=58
-if [[ "$files_migration_blocked" == false ]]; then expected_applied_migrations=72; fi
+expected_applied_migrations=72
+
 actual_migrations="$(find "$P47_ASSEMBLED/services" -type f -path '*/database/migrations/*.php' | wc -l | tr -d ' ')"
 test "$actual_migrations" = "$expected_source_migrations"
 test "$(mysql_exec "$source_name" "$source_password" --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='srd_gateway'")" = 0
@@ -388,13 +453,26 @@ age -R "$work/recipient.txt" -o "$backup/env.production.age" "$work/env.producti
 )
 rm -f "$backup/mysql.sql"
 log 'PASS: created encrypted mysqldump, private-files tar and synthetic environment using an ephemeral age identity and SHA-256 manifest.'
+age-keygen -o "$work/wrong-age-identity.txt" 2>/dev/null
+if age -d -i "$work/wrong-age-identity.txt" -o "$work/wrong-identity-output" "$backup/mysql.sql.age" >/dev/null 2>&1; then
+    echo 'Encrypted synthetic backup accepted an unrelated identity.' >&2
+    exit 1
+fi
+cp "$backup/mysql.sql.age" "$work/mysql-tampered.sql.age"
+printf 'tamper' >> "$work/mysql-tampered.sql.age"
+if age -d -i "$work/age-identity.txt" -o "$work/tampered-output" "$work/mysql-tampered.sql.age" >/dev/null 2>&1; then
+    echo 'Encrypted synthetic backup accepted modified ciphertext.' >&2
+    exit 1
+fi
+rm -f "$work/wrong-age-identity.txt" "$work/wrong-identity-output" "$work/mysql-tampered.sql.age" "$work/tampered-output"
+log 'PASS: wrong age identity and modified ciphertext were both rejected; no key material is included in artifacts.'
 
 restore_network=p47-restore
 docker network create --internal "$restore_network" >/dev/null
 networks+=("$restore_network")
 docker run -d --name "$restore_name" --network "$restore_network" --network-alias p47-restore-mysql \
     -e MYSQL_ROOT_PASSWORD="$restore_password" "$P47_MYSQL_IMAGE" \
-    --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci >/dev/null
+    --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci >/dev/null
 containers+=("$restore_name")
 mysql_ready "$restore_name" "$restore_password"
 restore_dir="$work/restore"

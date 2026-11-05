@@ -1,13 +1,41 @@
 <?php
-foreach(['ImageRejected','ScannerUnavailable','Scanner','ClamdScanner','ImageGate','PhotoConflict','PhotoNotFound','PhotoQuotaExceeded','PhotoStorage','AssetPhotoStorage','PhotoStore'] as $c)require __DIR__.'/../services/files/app/'.$c.'.php';
+foreach(['ImageRejected','ScannerUnavailable','Scanner','ClamdScanner','ImageGate','PhotoConflict','PhotoNotFound','PhotoQuotaExceeded','PhotoStorage','AssetPhotoStorage','UserPhotoStorage','PhotoStore'] as $c)require __DIR__.'/../services/files/app/'.$c.'.php';
 use SrdFiles\{Scanner, ImageGate, PhotoStore, PhotoConflict, PhotoNotFound, PhotoQuotaExceeded};
-function connection():PDO{return new PDO('mysql:host=mysql;dbname=srd_files_probe;charset=utf8mb4','root','',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);}
+function connection():PDO
+{
+    $host=getenv('FILES_TEST_DB_HOST')?:'mysql';
+    $database=getenv('FILES_TEST_DB_DATABASE')?:'srd_files_probe';
+    $username=getenv('FILES_TEST_DB_USERNAME')?:'root';
+    $password=getenv('FILES_TEST_DB_PASSWORD')?:'';
+    return new PDO("mysql:host=$host;dbname=$database;charset=utf8mb4",$username,$password,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+}
 function expect(bool $ok,string $message='Comprobación fallida'):void{if(!$ok)throw new RuntimeException($message);}
 function rejects(callable $f,string $type):void{try{$f();}catch(Throwable $e){expect($e instanceof $type,get_class($e).': '.$e->getMessage());return;}throw new RuntimeException('Faltó rechazo: '.$type);}
 $db=connection();$db->exec(file_get_contents(__DIR__.'/../services/files/database/schema.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/asset-photos.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/deleted-persons.mysql.sql'));
-$base=realpath(__DIR__.'/..').'/.local/photo-storage';$root=$base.'/run-'.bin2hex(random_bytes(12));
+// Mirror Database's 2026_10_08_000002_user_photos migration in this disposable PDO fixture.
+$db->exec('CREATE TABLE user_photos (
+    organization_id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    slot VARCHAR(16) NOT NULL,
+    version BIGINT UNSIGNED NOT NULL,
+    blob_id CHAR(48) NULL,
+    bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    sha256 CHAR(64) NULL,
+    width INT UNSIGNED NULL,
+    height INT UNSIGNED NULL,
+    PRIMARY KEY (organization_id,user_id,slot),
+    UNIQUE KEY (blob_id),
+    FOREIGN KEY (organization_id) REFERENCES file_quotas(organization_id)
+) ENGINE=InnoDB');
+// Mirror Database's 2026_10_14_000002_erased_person_blob_tracking migration
+// in this disposable PDO fixture; the P47 runtime job separately executes all migrations.
+$db->exec('ALTER TABLE file_garbage ADD COLUMN person_id CHAR(36) NULL, ADD INDEX file_garbage_person_id_index (person_id)');
+$db->exec('CREATE TABLE file_deleted_person_blobs (blob_id CHAR(48) PRIMARY KEY, organization_id CHAR(36) NOT NULL, person_id CHAR(36) NOT NULL, INDEX file_deleted_person_blobs_org_person_index (organization_id, person_id), FOREIGN KEY (blob_id) REFERENCES file_garbage(blob_id) ON DELETE CASCADE) ENGINE=InnoDB');
+$base=getenv('FILES_TEST_STORAGE_DIR')?:realpath(__DIR__.'/..').'/.local/photo-storage';
+if(!is_dir($base)&&!mkdir($base,0700,true))throw new RuntimeException('No se pudo preparar el almacenamiento temporal.');
+$root=$base.'/run-'.bin2hex(random_bytes(12));
 mkdir($root,0700);mkdir($root.'/objects',0700);mkdir($root.'/quarantine',0700);
 $scanner=new class implements Scanner{public function assertClean(string $path):void{}};
 $gate=new ImageGate($root.'/quarantine',$scanner);
@@ -63,7 +91,7 @@ $check('quota-blocks-upload-and-releases-after-cleanup',function()use($db,$root,
     $small->delete($p,$person,'property',1,true);rejects(fn()=>$small->put($p,$person,'document','sample.png',$png,2),PhotoQuotaExceeded::class);
     $small->collect($p['organization_id']);expect($small->put($p,$person,'document','sample.png',$png,2)['present']);
 });
-$check('outbox-metadata-no-content',function()use($db){$events=$db->query('SELECT * FROM outbox_events')->fetchAll(PDO::FETCH_ASSOC);expect(count($events)>=8);foreach($events as $event){expect(in_array($event['action'],['photo.created','photo.replaced','photo.deleted'],true));expect($event['published_at']===null);expect(!str_contains(json_encode($event),'sample.png'));}});
+$check('outbox-metadata-no-content',function()use($db){$events=$db->query('SELECT * FROM outbox_events')->fetchAll(PDO::FETCH_ASSOC);expect(count($events)>=8);foreach($events as $event){expect(in_array($event['action'],['photo.created','photo.replaced','photo.deleted','photo.person_deleted','asset_photo.created','asset_photo.deleted'],true));expect($event['published_at']===null);expect(!str_contains(json_encode($event),'sample.png'));}});
 $check('asset-slots-share-private-quota-and-live-object-protection',function()use($db,$root,$gate,$p,$png){
     $asset='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     $authorizer=fn(array $principal,string $id,string $action):bool=>$id===$asset && in_array($action,['inventory.read','inventory.write'],true);
@@ -101,16 +129,21 @@ $check('person-purge-idempotent-isolated-and-blocks-late-upload',function()use($
     foreach(PhotoStore::SLOTS as $slot)$store->put($p,$id,$slot,'sample.png',$png,0);
     $other=array_replace($p,['organization_id'=>'88888888-8888-4888-8888-888888888888']);
     $store->put($other,$id,'person','sample.png',$png,0);
-    $before=(int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$p['organization_id']}'")->fetchColumn();
+    $quota=$db->prepare('SELECT reserved_bytes FROM file_quotas WHERE organization_id=?');$quota->execute([$p['organization_id']]);$before=(int)$quota->fetchColumn();
+    $bytes=$db->prepare('SELECT COALESCE(SUM(bytes),0) FROM person_photos WHERE organization_id=? AND person_id=?');$bytes->execute([$p['organization_id'],$id]);$purgedBytes=(int)$bytes->fetchColumn();
+    expect($purgedBytes>0,'Fixture must reserve bytes for the person being purged.');
     $store->purgePerson($p,$id);$store->purgePerson($p,$id);
-    expect((int)$db->query("SELECT COUNT(*) FROM outbox_events WHERE action='photo.person_deleted' AND resource_id='$id'")->fetchColumn()===1);
-    expect((int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$p['organization_id']}'")->fetchColumn()===$before);
+    expect((int)$db->query("SELECT COUNT(*) FROM outbox_events WHERE action='photo.person_deleted' AND resource_id='$id'")->fetchColumn()===1,'Person erasure must emit exactly one outbox event.');
+    $quota->execute([$p['organization_id']]);expect((int)$quota->fetchColumn()===$before-$purgedBytes,'Person erasure must release exactly the bytes of its collected photos.');
     foreach($store->list($p,$id)as $r)expect(!$r['present']);
     rejects(fn()=>$store->put($p,$id,'person','sample.png',$png,0),PhotoNotFound::class);
     expect($store->read($other,$id,'person')['mime']==='image/png');
-    expect($store->collect($p['organization_id'])>=3);
-    $store->purgePerson($other,$id);expect($store->collect($other['organization_id'])===1);
-    expect((int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$other['organization_id']}'")->fetchColumn()===0);
+    expect($store->collect($p['organization_id'])===0,'Person purge already collected its blobs.');
+    $quota->execute([$other['organization_id']]);$otherBefore=(int)$quota->fetchColumn();
+    $bytes->execute([$other['organization_id'],$id]);$otherPurgedBytes=(int)$bytes->fetchColumn();
+    expect($otherPurgedBytes>0,'Second tenant fixture must reserve bytes for its own photo.');
+    $store->purgePerson($other,$id);expect($store->collect($other['organization_id'])===0,'Other-tenant purge already collected its blobs.');
+    $quota->execute([$other['organization_id']]);expect((int)$quota->fetchColumn()===$otherBefore-$otherPurgedBytes,'Other-tenant purge must release only its own photo bytes.');
 });
 // Fork with independent PDO connections; a common start file aligns competing transactions.
 $race=function(bool $sameSlot)use($root,$scanner,$authorize,$person,$png,$size):array{
