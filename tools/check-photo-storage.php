@@ -129,16 +129,21 @@ $check('person-purge-idempotent-isolated-and-blocks-late-upload',function()use($
     foreach(PhotoStore::SLOTS as $slot)$store->put($p,$id,$slot,'sample.png',$png,0);
     $other=array_replace($p,['organization_id'=>'88888888-8888-4888-8888-888888888888']);
     $store->put($other,$id,'person','sample.png',$png,0);
-    $before=(int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$p['organization_id']}'")->fetchColumn();
+    $quota=$db->prepare('SELECT reserved_bytes FROM file_quotas WHERE organization_id=?');$quota->execute([$p['organization_id']]);$before=(int)$quota->fetchColumn();
+    $bytes=$db->prepare('SELECT COALESCE(SUM(bytes),0) FROM person_photos WHERE organization_id=? AND person_id=?');$bytes->execute([$p['organization_id'],$id]);$purgedBytes=(int)$bytes->fetchColumn();
+    expect($purgedBytes>0,'Fixture must reserve bytes for the person being purged.');
     $store->purgePerson($p,$id);$store->purgePerson($p,$id);
-    expect((int)$db->query("SELECT COUNT(*) FROM outbox_events WHERE action='photo.person_deleted' AND resource_id='$id'")->fetchColumn()===1);
-    expect((int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$p['organization_id']}'")->fetchColumn()===$before);
+    expect((int)$db->query("SELECT COUNT(*) FROM outbox_events WHERE action='photo.person_deleted' AND resource_id='$id'")->fetchColumn()===1,'Person erasure must emit exactly one outbox event.');
+    $quota->execute([$p['organization_id']]);expect((int)$quota->fetchColumn()===$before-$purgedBytes,'Person erasure must release exactly the bytes of its collected photos.');
     foreach($store->list($p,$id)as $r)expect(!$r['present']);
     rejects(fn()=>$store->put($p,$id,'person','sample.png',$png,0),PhotoNotFound::class);
     expect($store->read($other,$id,'person')['mime']==='image/png');
-    expect($store->collect($p['organization_id'])>=3);
-    $store->purgePerson($other,$id);expect($store->collect($other['organization_id'])===1);
-    expect((int)$db->query("SELECT reserved_bytes FROM file_quotas WHERE organization_id='{$other['organization_id']}'")->fetchColumn()===0);
+    expect($store->collect($p['organization_id'])===0,'Person purge already collected its blobs.');
+    $quota->execute([$other['organization_id']]);$otherBefore=(int)$quota->fetchColumn();
+    $bytes->execute([$other['organization_id'],$id]);$otherPurgedBytes=(int)$bytes->fetchColumn();
+    expect($otherPurgedBytes>0,'Second tenant fixture must reserve bytes for its own photo.');
+    $store->purgePerson($other,$id);expect($store->collect($other['organization_id'])===0,'Other-tenant purge already collected its blobs.');
+    $quota->execute([$other['organization_id']]);expect((int)$quota->fetchColumn()===$otherBefore-$otherPurgedBytes,'Other-tenant purge must release only its own photo bytes.');
 });
 // Fork with independent PDO connections; a common start file aligns competing transactions.
 $race=function(bool $sameSlot)use($root,$scanner,$authorize,$person,$png,$size):array{
