@@ -9,7 +9,8 @@ umask 077
 : "${P46_MYSQL_IMAGE:?pinned MySQL client image required}"
 
 databases=(srd_gateway srd_identity srd_configuration srd_records srd_audit srd_files srd_calendar srd_notifications srd_treasury srd_inventory srd_chat)
-database_list="'$(IFS="','"; printf "%s" "${databases[*]}")'"
+database_list=$(printf "'%s'," "${databases[@]}")
+database_list=${database_list%,}
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/srd-p46-restore.XXXXXX")
 backup="$work/backup"
 mkdir -p "$backup" "$work/private/documents"

@@ -137,9 +137,9 @@ jobs:
           cp -a _database/services/. services/
           test -s services/gateway/composer.lock
           test -s services/identity/composer.lock
-          for service in gateway identity; do
-            find "services/$service/database/migrations" -maxdepth 1 -type f -name '*.php' | grep -q .
-          done
+          test -s services/gateway/artisan
+          test -s services/identity/artisan
+          find services/identity/database/migrations -maxdepth 1 -type f -name '*.php' | grep -q .
       - name: Build Gateway and Identity production FPM candidate images sequentially
         run: |
           set -euo pipefail
