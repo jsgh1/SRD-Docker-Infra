@@ -1,0 +1,469 @@
+name: MySQL authentication, roles and tenant integration
+
+on:
+  pull_request:
+    branches: [dev, qa, main]
+    paths:
+      - '.github/workflows/p10-mysql-auth.yml'
+      - 'tools/mysql-auth-ci.mjs'
+      - 'tools/mysql-tenant-ci.mjs'
+      - 'tools/fixture-credentials.mjs'
+      - 'tools/create-fixtures.php'
+      - 'tools/fixture-safety.php'
+      - 'tools/fixture-safety.test.php'
+      - 'tools/assert-fixture-session-state.php'
+      - 'tools/assert-fixture-mobile-login.php'
+      - 'tools/revoke-fixture-mobile-session.php'
+      - 'tools/manage-fixture-mobile-challenge.php'
+      - 'tools/set-fixture-mobile-role.php'
+      - 'tools/mobile-android-mfa-ci.mjs'
+      - 'tools/mobile-android-ui.mjs'
+      - 'tools/mobile-android-ui.test.mjs'
+      - 'tools/run-android-acceptance.sh'
+      - 'tools/browser-tests/chat-session-expiry.spec.mjs'
+      - 'scripts/Seed-ComposeTests.ps1'
+      - 'scripts/Test-Browser.ps1'
+      - 'tools/assemble-workspace.mjs'
+      - 'compose.yaml'
+      - 'docker/php.Dockerfile'
+      - 'database/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p10-mysql-auth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-harness-unit:
+    name: Fast Android harness unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+      - name: Test Android harness and fixture target guards without Docker
+        run: |
+          node --test tools/mobile-android-ui.test.mjs tools/p20-android-client-profile.test.mjs
+          php -l tools/fixture-safety.php
+          php -l tools/fixture-safety.test.php
+          php tools/fixture-safety.test.php
+
+  mysql-auth-integration:
+    name: Real MySQL, SMTP MFA, Android QA and tenant boundary
+    needs: android-harness-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      SRD_COMPOSE_PROJECT: srd-p10-auth-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out Docker Infra under review
+        uses: actions/checkout@v4
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+
+      - name: Check out immutable integration sources
+        uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: aab473c769a9e7e29fc78f33a0694121f67dd715
+          path: sources/SRD-Backend
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
+          path: sources/SRD-Frontend
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: c396bde6e37f6be1b2f7566be3df010d947e9fe7
+          path: sources/SRD-Database
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: 14317523566e27d46bbc152fc1627cf1807f77f4
+          path: sources/SRD-Docs
+          persist-credentials: false
+
+      - name: Check public runner resources and isolate this run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+          mem_total_kb="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+          disk_available_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          cpu_count="$(nproc)"
+          mem_available_gib="$((mem_available_kb / 1024 / 1024))"
+          mem_total_gib="$((mem_total_kb / 1024 / 1024))"
+          disk_available_gib="$((disk_available_kb / 1024 / 1024))"
+          {
+            echo "Runner: ubuntu-latest"
+            echo "CPUCount: ${cpu_count}"
+            echo "MemTotalGiB: ${mem_total_gib} (integer GiB)"
+            echo "MemAvailableGiB: ${mem_available_gib} (integer GiB)"
+            echo "TempDiskAvailableGiB: ${disk_available_gib} (integer GiB)"
+            echo "Docker: $(docker version --format '{{.Server.Version}}')"
+          } | tee runner-capacity.txt
+          if (( cpu_count < 2 )); then
+            echo 'Runner exposes fewer than 2 CPUs; refusing integration startup.' >&2
+            exit 1
+          fi
+          if (( mem_available_kb < 5 * 1024 * 1024 )); then
+            echo 'Runner has less than 5 GiB available memory; refusing integration startup.' >&2
+            exit 1
+          fi
+          if (( disk_available_kb < 8 * 1024 * 1024 )); then
+            echo 'Runner has less than 8 GiB available disk; refusing integration build.' >&2
+            exit 1
+          fi
+          docker info >/dev/null
+          if docker ps -aq --filter "label=com.docker.compose.project=$SRD_COMPOSE_PROJECT" | grep -q .; then
+            echo 'The unique Compose project name already has containers.' >&2
+            exit 1
+          fi
+          if docker volume ls -q --filter "label=com.docker.compose.project=$SRD_COMPOSE_PROJECT" | grep -q .; then
+            echo 'The unique Compose project name already has volumes.' >&2
+            exit 1
+          fi
+          for port in 8080 8025; do
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+              echo "Required QA port $port is already in use; nothing was stopped." >&2
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sources/SRD-Frontend/apps/mobile/package-lock.json
+
+      - name: Verify immutable SHAs and assemble the five-source workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C sources/SRD-Backend rev-parse HEAD)" = 'aab473c769a9e7e29fc78f33a0694121f67dd715'
+          test "$(git -C sources/SRD-Frontend rev-parse HEAD)" = 'bc455e353cfdc0cf280911808a5ecb7dcf488cb0'
+          test "$(git -C sources/SRD-Database rev-parse HEAD)" = 'c396bde6e37f6be1b2f7566be3df010d947e9fe7'
+          test "$(git -C sources/SRD-Docs rev-parse HEAD)" = '14317523566e27d46bbc152fc1627cf1807f77f4'
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
+          node --check sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs
+          node --check sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs
+          test -f assembled/compose.yaml
+          test -f assembled/tools/create-fixtures.php
+          test -f assembled/tools/fixture-credentials.mjs
+          mkdir -p test-results
+          printf 'Repository: jsgh1/SRD-Frontend\nCommit: %s\nPurpose: React Native Android QA APK; no release publication\n' \
+            "$(git -C sources/SRD-Frontend rev-parse HEAD)" > test-results/frontend-source.txt
+          (
+            cd assembled
+            node tools/initialize.mjs
+            node tools/fixture-credentials.mjs
+          )
+      - name: Validate the selected Compose project before creating resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml config --quiet
+
+      - name: Build only Configuration, Identity, Records, Gateway and Web sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          compose pull mysql mailpit
+          compose build identity
+          compose build configuration
+          compose build records
+          compose build gateway
+          compose build web
+
+      - name: Start isolated MySQL and Mailpit, then initialize service databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml \
+            up -d --wait --wait-timeout 240 mysql mailpit
+          docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+            -f assembled/compose.yaml \
+            exec -T mysql bash /docker-entrypoint-initdb.d/01-services.sh
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8025/api/v1/messages >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo 'Mailpit API did not become available.' >&2
+          exit 1
+
+      - name: Start only Configuration, Identity, Records and Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          compose up -d --wait --wait-timeout 180 configuration
+          compose up -d --wait --wait-timeout 180 identity
+          compose up -d --wait --wait-timeout 180 records
+          compose up -d --wait --wait-timeout 180 gateway
+          compose up -d --wait --wait-timeout 180 web
+          compose port web 80
+          curl --fail --silent --show-error http://127.0.0.1:8080/ >/dev/null
+          compose ps
+
+      - name: Apply real MySQL migrations for the selected services
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          for service in configuration identity records gateway; do
+            compose exec -T "$service" php artisan migrate --force
+          done
+
+      - name: Seed synthetic tenants and run the P10 baseline plus P11 HTTP security matrix
+        shell: bash
+        env:
+          SRD_JUNIT_PATH: test-results/p10-mysql-auth.junit.xml
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
+          SRD_MAILPIT_URL: http://127.0.0.1:8025
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml "$@"
+          }
+          fixture_target=/tmp/srd-p10-fixture.json
+          compose cp assembled/tools/fixture-safety.php configuration:/tmp/srd-fixture-safety.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
+          compose cp assembled/tools/create-fixtures.php configuration:/tmp/srd-p10-fixtures.php
+          compose cp assembled/.local/e2e-fixture.json "configuration:$fixture_target"
+          compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+            -e "SRD_FIXTURE_PATH=$fixture_target" configuration php /tmp/srd-p10-fixtures.php configuration
+          compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p10-fixtures.php
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+            -e "SRD_FIXTURE_PATH=$fixture_target" -e SRD_BROWSER_SPEC=chat-switch-organization.spec.mjs \
+            identity php /tmp/srd-p10-fixtures.php identity
+          compose exec -T --user 0 configuration rm -f /tmp/srd-p10-fixtures.php "$fixture_target" /tmp/srd-fixture-safety.php
+          node sources/SRD-Docker-Infra/tools/mysql-auth-ci.mjs assembled/.local/e2e-fixture.json
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+            -e SRD_P11_TENANT_RECORDS=1 -e "SRD_FIXTURE_PATH=$fixture_target" \
+            identity php /tmp/srd-p10-fixtures.php identity
+          compose exec -T --user 0 identity rm -f /tmp/srd-p10-fixtures.php "$fixture_target" /tmp/srd-fixture-safety.php
+          node sources/SRD-Docker-Infra/tools/mysql-tenant-ci.mjs assembled/.local/e2e-fixture.json
+          compose cp assembled/tools/create-fixtures.php identity:/tmp/srd-p15-mobile-fixtures.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
+          compose cp assembled/.local/e2e-fixture.json "identity:$fixture_target"
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+            -e "SRD_FIXTURE_PATH=$fixture_target" identity php /tmp/srd-p15-mobile-fixtures.php identity
+          compose cp assembled/tools/assert-fixture-mobile-login.php identity:/tmp/srd-p15-mobile-login-check.php
+          compose exec -T -e SRD_ROOT=/app -e SRD_ALLOW_MYSQL_FIXTURES=1 -e "SRD_COMPOSE_PROJECT=$SRD_COMPOSE_PROJECT" -e SRD_FIXTURE_SAFETY_PATH=/tmp/srd-fixture-safety.php \
+            -e "SRD_FIXTURE_PATH=$fixture_target" identity php /tmp/srd-p15-mobile-login-check.php
+          compose exec -T --user 0 identity rm -f /tmp/srd-p15-mobile-fixtures.php /tmp/srd-p15-mobile-login-check.php "$fixture_target" /tmp/srd-fixture-safety.php
+          compose cp assembled/tools/fixture-safety.php identity:/tmp/srd-fixture-safety.php
+          compose cp assembled/tools/assert-fixture-session-state.php identity:/tmp/srd-p14-session-state.php
+          compose cp assembled/tools/revoke-fixture-mobile-session.php identity:/tmp/srd-p14-revoke-mobile-session.php
+          compose cp assembled/tools/manage-fixture-mobile-challenge.php identity:/tmp/srd-p14-mobile-challenge.php
+
+      - name: Verify Android QA runner capacity and KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+          disk_available_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          if (( mem_available_kb < 5 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 5 GiB available memory; refusing to launch.' >&2
+            exit 1
+          fi
+          if (( disk_available_kb < 8 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 8 GiB available disk; refusing SDK installation.' >&2
+            exit 1
+          fi
+          test -c /dev/kvm
+          runner_user="$(id -un)"
+          sudo chown "$runner_user" /dev/kvm
+          sudo chmod 0600 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          {
+            echo "Android runner MemAvailableGiB: $((mem_available_kb / 1024 / 1024))"
+            echo "Android runner TempDiskAvailableGiB: $((disk_available_kb / 1024 / 1024))"
+            echo 'KVM: readable and writable by the runner user'
+            stat -c 'KVM device permissions: %a' /dev/kvm
+          } | tee android-runner-capacity.txt
+
+      - name: Set up Java 17 for the QA APK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            sources/SRD-Frontend/apps/mobile/android/gradle/wrapper/gradle-wrapper.properties
+            sources/SRD-Frontend/apps/mobile/android/build.gradle
+            sources/SRD-Frontend/apps/mobile/android/settings.gradle
+            sources/SRD-Frontend/apps/mobile/android/gradle.properties
+            sources/SRD-Frontend/apps/mobile/android/app/build.gradle
+
+      - name: Install Android SDK packages for the QA APK
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+
+      - name: Build an ephemeral QA APK against the isolated host Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sources/SRD-Frontend/apps/mobile
+          npm ci --no-audit --no-fund
+          cd android
+          sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0'
+          ndk_installed=0
+          for attempt in 1 2; do
+            if sdkmanager --install 'ndk;27.1.12297006'; then
+              ndk_installed=1
+              break
+            fi
+            if [[ "${attempt}" -eq 1 ]]; then
+              echo 'NDK package download failed; retrying once after 5 seconds.' >&2
+              sleep 5
+            fi
+          done
+          if [[ "${ndk_installed}" -ne 1 ]]; then
+            echo 'Could not install the pinned NDK package after one retry.' >&2
+            exit 1
+          fi
+          log_file="${RUNNER_TEMP}/srd-qa-rejects-production.log"
+          set +e
+          bash ./gradlew :app:tasks -PsrdQaApiOrigin=https://srd-jsgh1.duckdns.org \
+            --no-daemon --max-workers=1 >"${log_file}" 2>&1
+          status=$?
+          set -e
+          if [[ "${status}" -eq 0 ]] || ! grep -Fq 'QA accepts only a local, private or .test origin' "${log_file}"; then
+            echo 'QA Gradle origin guard did not reject the production host for the expected reason.' >&2
+            exit 1
+          fi
+          cd app
+          keytool -genkeypair -v -keystore debug.keystore -storepass android \
+            -alias androiddebugkey -keypass android \
+            -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          cd ..
+          bash ./gradlew :app:assembleQaDebug -PsrdEmbedDebugJs=true \
+            -PsrdQaApiOrigin=http://10.0.2.2:8080 --no-daemon --max-workers=2
+          apk_path='app/build/outputs/apk/qa/debug/app-qa-debug.apk'
+          test -f "${apk_path}"
+          "${ANDROID_HOME}/build-tools/37.0.0/aapt" dump badging "${apk_path}" | grep -Fq "package: name='com.srd.mobile.qa'"
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify "${apk_path}"
+
+      - name: Recheck runner resources after the native Android QA APK build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+          disk_available_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+          if (( mem_available_kb < 5 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 5 GiB available memory after the native APK build; refusing to launch.' >&2
+            exit 1
+          fi
+          if (( disk_available_kb < 4 * 1024 * 1024 )); then
+            echo 'Android emulator requires at least 4 GiB available disk after the native APK build; refusing to launch.' >&2
+            exit 1
+          fi
+          test -r /dev/kvm && test -w /dev/kvm
+          echo "MemAvailableGiB: $((mem_available_kb / 1024 / 1024))"
+          echo "TempDiskAvailableGiB: $((disk_available_kb / 1024 / 1024))"
+
+      - name: Run React Native Android acceptance with real Mailpit MFA
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          disk-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          disable-spellchecker: true
+          emulator-boot-timeout: 600
+          script: bash sources/SRD-Docker-Infra/tools/run-android-acceptance.sh
+        env:
+          SRD_ANDROID_APK: sources/SRD-Frontend/apps/mobile/android/app/build/outputs/apk/qa/debug/app-qa-debug.apk
+          SRD_FIXTURE_PATH: assembled/.local/e2e-fixture.json
+          SRD_GATEWAY_URL: http://127.0.0.1:8080
+          SRD_MAILPIT_URL: http://127.0.0.1:8025
+          SRD_ANDROID_GATEWAY_ORIGIN: http://10.0.2.2:8080
+          SRD_ANDROID_JUNIT_PATH: test-results/android-qa-e2e.junit.xml
+          SRD_ANDROID_RESOURCES_PATH: test-results/android-qa-runner-resources.txt
+          SRD_ASSERT_FIXTURE_SESSIONS: '1'
+          SRD_COMPOSE_ENV_FILE: assembled/.env
+          SRD_COMPOSE_FILE: assembled/compose.yaml
+
+      - name: Upload native Android acceptance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: srd-react-native-android-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/android-qa-e2e.junit.xml
+            test-results/android-qa-runner-resources.txt
+            test-results/frontend-source.txt
+            test-results/android-qa-failure.png
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload non-secret integration results and source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: srd-mysql-auth-tenant-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/p10-mysql-auth.junit.xml
+            test-results/p11-mysql-tenant.junit.xml
+            test-results/android-qa-e2e.junit.xml
+            test-results/android-qa-runner-resources.txt
+            test-results/frontend-source.txt
+            runner-capacity.txt
+            android-runner-capacity.txt
+            assembled/srd-provenance.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove only this ephemeral Compose project's containers and network
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -f assembled/compose.yaml && -f assembled/.env ]]; then
+            docker compose --project-name "$SRD_COMPOSE_PROJECT" --env-file assembled/.env \
+              -f assembled/compose.yaml \
+              down --remove-orphans
+          fi
+          # The runner is disposable; project-labelled volumes are not explicitly deleted.
