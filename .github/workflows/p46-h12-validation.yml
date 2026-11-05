@@ -191,10 +191,13 @@ jobs:
           docker exec srd-p46-identity-fpm php-fpm -t
           docker exec srd-p46-gateway-nginx nginx -t
           docker exec srd-p46-identity-nginx nginx -t
-          docker exec srd-p46-gateway-fpm php -m | grep -qx pdo_mysql
-          docker exec srd-p46-gateway-fpm php -m | grep -qx curl
-          docker exec srd-p46-identity-fpm php -m | grep -qx pdo_mysql
-          docker exec srd-p46-gateway-fpm php -i | grep -q '^memory_limit => 256M'
+          gateway_modules=$(docker exec srd-p46-gateway-fpm php -m)
+          identity_modules=$(docker exec srd-p46-identity-fpm php -m)
+          gateway_phpinfo=$(docker exec srd-p46-gateway-fpm php -i)
+          [[ $'\n'"$gateway_modules"$'\n' == *$'\npdo_mysql\n'* ]]
+          [[ $'\n'"$gateway_modules"$'\n' == *$'\ncurl\n'* ]]
+          [[ $'\n'"$identity_modules"$'\n' == *$'\npdo_mysql\n'* ]]
+          printf '%s\n' "$gateway_phpinfo" | grep '^memory_limit => 256M' >/dev/null
           docker exec srd-p46-identity-fpm php artisan schedule:list --no-ansi
           for port in 18080 18081; do
             ready=false
