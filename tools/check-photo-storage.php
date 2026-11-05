@@ -1,5 +1,5 @@
 <?php
-foreach(['ImageRejected','ScannerUnavailable','Scanner','ClamdScanner','ImageGate','PhotoConflict','PhotoNotFound','PhotoQuotaExceeded','PhotoStorage','AssetPhotoStorage','PhotoStore'] as $c)require __DIR__.'/../services/files/app/'.$c.'.php';
+foreach(['ImageRejected','ScannerUnavailable','Scanner','ClamdScanner','ImageGate','PhotoConflict','PhotoNotFound','PhotoQuotaExceeded','PhotoStorage','AssetPhotoStorage','UserPhotoStorage','PhotoStore'] as $c)require __DIR__.'/../services/files/app/'.$c.'.php';
 use SrdFiles\{Scanner, ImageGate, PhotoStore, PhotoConflict, PhotoNotFound, PhotoQuotaExceeded};
 function connection():PDO
 {
