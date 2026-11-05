@@ -145,22 +145,22 @@ test('keeps integrated QA disabled and its preflight isolated', () => {
   assert.doesNotMatch(workflow.slice(artifactStart, artifactEnd), /assembled\/(?:\.env|\.local\/e2e-fixture\.json)/);
 });
 
-test('keeps workflow defaults, checkout fallbacks, and guards on the same P36 cut', () => {
+test('keeps workflow defaults, checkout fallbacks, and guards on the P48 source cut', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/d8-cross-repo.yml', import.meta.url), 'utf8');
   const approved = [
-    'df312f375159cd730e18c02027ec55efd767401f',
-    '158dcae1957d1b37025fcec137ada0b7b9f17984',
+    'd1f3052c3e734bc2357a45eada3ae32b04241877',
+    '757af358ba0200f00646e95ab8a4eefbb75f62d1',
     'a96fc6e40e18c19adb6588362f53fb0c8bce5e33',
-    '90675bed64469dd17157fa224cbb6fcc833a382c',
+    '14317523566e27d46bbc152fc1627cf1807f77f4',
   ];
   for (const revision of approved) {
     assert.equal((workflow.match(new RegExp(revision, 'g')) ?? []).length, 4, revision + ' must be consistent across input, validations, and checkout');
   }
 });
 
-test('uses the approved Backend cut in the required clean Reverb image check', () => {
+test('uses the P48 Backend cut in the required clean Reverb image check', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/migration-compose-validation.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /repository: jsgh1\/SRD-Backend[\s\S]*?ref: df312f375159cd730e18c02027ec55efd767401f[\s\S]*?path: _backend/);
+  assert.match(workflow, /repository: jsgh1\/SRD-Backend[\s\S]*?ref: d1f3052c3e734bc2357a45eada3ae32b04241877[\s\S]*?path: _backend/);
   assert.doesNotMatch(workflow, /ref: fd5e0add40643543e9dd6b80f8da3ee10b4aea52/);
 });
 

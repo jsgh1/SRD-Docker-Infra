@@ -2,7 +2,7 @@ name: P47 H-12 all-service FPM and migrated restore
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [dev, qa, main]
 
 permissions:
   contents: read
@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           repository: jsgh1/SRD-Docs
-          ref: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          ref: 14317523566e27d46bbc152fc1627cf1807f77f4
           path: sources/SRD-Docs
           persist-credentials: false
       - name: Set up Node for source validation
@@ -83,7 +83,7 @@ jobs:
           BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
           FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
           DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
-          DOCS_SHA: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          DOCS_SHA: 14317523566e27d46bbc152fc1627cf1807f77f4
           INFRA_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -112,7 +112,7 @@ jobs:
           BACKEND_SHA: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
           FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
           DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
-          DOCS_SHA: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          DOCS_SHA: 14317523566e27d46bbc152fc1627cf1807f77f4
           INFRA_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
