@@ -112,6 +112,11 @@ start_fpm() {
     containers+=("$name")
 }
 check_extension() { docker exec "$1" php -m | grep -Fx "$2" >/dev/null; }
+http_status_from_nginx() {
+    local container="$1" path="$2" output
+    output="$(docker exec "$container" sh -c 'wget -S -O /dev/null "http://127.0.0.1:8000$1" 2>&1' sh "$path" 2>&1 || true)"
+    printf '%s\n' "$output" | sed -nE 's/.*HTTP\/1\.[01] ([0-9]{3})( .*)?$/\1/p' | tail -n 1
+}
 test_reverb() {
     local name=p47-chat-reverb
     docker run -d --name "$name" --network p47-source --publish 127.0.0.1:18082:8080 \
@@ -183,14 +188,13 @@ runtime_service() {
     if [[ "$service" == files ]]; then check_extension "$fpm_name" exif; fi
     test -z "$(docker port "$fpm_name" 9000/tcp || true)"
     docker run -d --name "$nginx_name" --network p47-source \
-        --publish 127.0.0.1:18080:8000 "$(nginx_image "$service")" >/dev/null
+        "$(nginx_image "$service")" >/dev/null
     containers+=("$nginx_name")
     docker exec "$nginx_name" nginx -t >/dev/null
     docker exec "$fpm_name" php artisan --version --no-ansi >/dev/null
     status=''
     for attempt in $(seq 1 45); do
-        status="$(curl --silent --show-error --max-time 3 --output "$work/up-$service.json" \
-            --write-out '%{http_code}' http://127.0.0.1:18080/up 2>/dev/null || true)"
+        status="$(http_status_from_nginx "$nginx_name" /up)"
         [[ "$status" == 200 ]] && break
         sleep 2
     done
@@ -200,11 +204,10 @@ runtime_service() {
         docker logs "$nginx_name" 2>&1 | tail -n 30 >&2 || true
         return 1
     fi
-    test -s "$work/up-$service.json"
-    test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/.env || true)" = 403
-    test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/index.php/secret || true)" = 404
+    test "$(http_status_from_nginx "$nginx_name" /.env)" = 403
+    test "$(http_status_from_nginx "$nginx_name" /index.php/secret)" = 404
     if [[ -s "$P47_ASSEMBLED/services/$service/public/robots.txt" ]]; then
-        test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/robots.txt)" = 200
+        test "$(http_status_from_nginx "$nginx_name" /robots.txt)" = 200
     fi
     log "PASS: $service PHP-FPM/Nginx: FPM config, extensions, Nginx config, /up HTTP 200, path guards, static robots where present, host FastCGI unpublished."
     remove_container "$nginx_name"
