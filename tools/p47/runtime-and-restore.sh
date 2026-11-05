@@ -149,7 +149,8 @@ socket.on('data', chunk => {
     const end = data.indexOf('\r\n\r\n'); if (end < 0) return;
     const header = data.subarray(0, end).toString('latin1');
     const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-    if (!/^HTTP\/1\.1 101\b/m.test(header) || !header.toLowerCase().includes('sec-websocket-accept: ' + accept.toLowerCase())) return fail('Invalid WebSocket upgrade response');
+    const acceptHeader = header.match(/^sec-websocket-accept:\s*(.+)$/im);
+    if (!/^HTTP\/1\.1 101\b/m.test(header) || !acceptHeader || acceptHeader[1].trim() !== accept) return fail('Invalid WebSocket upgrade response');
     data = data.subarray(end + 4); upgraded = true;
   }
   while (data.length >= 2) {
@@ -185,6 +186,7 @@ runtime_service() {
         --publish 127.0.0.1:18080:8000 "$(nginx_image "$service")" >/dev/null
     containers+=("$nginx_name")
     docker exec "$nginx_name" nginx -t >/dev/null
+    docker exec "$fpm_name" php artisan --version --no-ansi >/dev/null
     status=''
     for attempt in $(seq 1 45); do
         status="$(curl --silent --show-error --max-time 3 --output "$work/up-$service.json" \
@@ -273,6 +275,15 @@ for service in gateway records; do
     containers+=("$name")
     test -z "$(docker port "$name" 9000/tcp || true)"
 done
+target_ready=false
+for attempt in $(seq 1 30); do
+    if docker exec p47-shared-records php -r '$s=@fsockopen("127.0.0.1",9000,$e,$m,2); if(!$s){exit(1);} fclose($s);' >/dev/null 2>&1; then
+        target_ready=true
+        break
+    fi
+    sleep 1
+done
+test "$target_ready" = true
 reachable=false
 for attempt in $(seq 1 30); do
     if docker exec p47-shared-gateway php -r '$s=@fsockopen("records-fpm",9000,$e,$m,2); if(!$s){exit(1);} fclose($s);' >/dev/null 2>&1; then
@@ -367,23 +378,23 @@ grep -qx 'APP_ENV=synthetic' "$restore_dir/env.production"
 grep -qx 'SRD_BACKUP_FIXTURE=true' "$restore_dir/env.production"
 tar -xf "$restore_dir/files.tar" -C "$restore_dir/private"
 docker exec -i -e MYSQL_PWD="$restore_password" "$restore_name" mysql --protocol=socket -uroot --default-character-set=utf8mb4 < "$restore_dir/mysql.sql"
-test "$(mysql_exec "$restore_name" "$restore_password" --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'srd\\_%'")" = 11
+test "$(mysql_exec "$restore_name" "$restore_password" --batch --skip-column-names --execute "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'srd!_%' ESCAPE '!'")" = 11
 
 schema_inventory() {
     mysql_exec "$1" "$2" --batch --skip-column-names --execute \
-      "SELECT CONCAT(table_schema,'.',table_name) FROM information_schema.tables WHERE table_schema LIKE 'srd\\_%' ORDER BY table_schema,table_name"
+      "SELECT CONCAT(table_schema,'.',table_name) FROM information_schema.tables WHERE table_schema LIKE 'srd!_%' ESCAPE '!' ORDER BY table_schema,table_name"
 }
 column_inventory() {
     mysql_exec "$1" "$2" --batch --skip-column-names --execute \
-      "SELECT CONCAT(table_schema,'.',table_name,'.',column_name,'|',column_type,'|',is_nullable,'|',COALESCE(column_default,'<NULL>'),'|',extra) FROM information_schema.columns WHERE table_schema LIKE 'srd\\_%' ORDER BY table_schema,table_name,ordinal_position"
+      "SELECT CONCAT(table_schema,'.',table_name,'.',column_name,'|',column_type,'|',is_nullable,'|',COALESCE(column_default,'<NULL>'),'|',extra) FROM information_schema.columns WHERE table_schema LIKE 'srd!_%' ESCAPE '!' ORDER BY table_schema,table_name,ordinal_position"
 }
 index_inventory() {
     mysql_exec "$1" "$2" --batch --skip-column-names --execute \
-      "SELECT CONCAT(table_schema,'.',table_name,'.',index_name,'|',seq_in_index,'|',COALESCE(column_name,'<NULL>'),'|',non_unique,'|',index_type) FROM information_schema.statistics WHERE table_schema LIKE 'srd\\_%' ORDER BY table_schema,table_name,index_name,seq_in_index"
+      "SELECT CONCAT(table_schema,'.',table_name,'.',index_name,'|',seq_in_index,'|',COALESCE(column_name,'<NULL>'),'|',non_unique,'|',index_type) FROM information_schema.statistics WHERE table_schema LIKE 'srd!_%' ESCAPE '!' ORDER BY table_schema,table_name,index_name,seq_in_index"
 }
 foreign_key_inventory() {
     mysql_exec "$1" "$2" --batch --skip-column-names --execute \
-      "SELECT CONCAT(constraint_schema,'.',table_name,'.',constraint_name,'|',referenced_table_schema,'.',referenced_table_name) FROM information_schema.referential_constraints WHERE constraint_schema LIKE 'srd\\_%' ORDER BY constraint_schema,table_name,constraint_name"
+      "SELECT CONCAT(constraint_schema,'.',table_name,'.',constraint_name,'|',referenced_table_schema,'.',referenced_table_name) FROM information_schema.referential_constraints WHERE constraint_schema LIKE 'srd!_%' ESCAPE '!' ORDER BY constraint_schema,table_name,constraint_name"
 }
 for kind in schema column index foreign_key; do
     case "$kind" in schema) function=schema_inventory ;; column) function=column_inventory ;; index) function=index_inventory ;; foreign_key) function=foreign_key_inventory ;; esac
