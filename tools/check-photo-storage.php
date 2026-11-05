@@ -14,6 +14,21 @@ function rejects(callable $f,string $type):void{try{$f();}catch(Throwable $e){ex
 $db=connection();$db->exec(file_get_contents(__DIR__.'/../services/files/database/schema.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/asset-photos.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/deleted-persons.mysql.sql'));
+// Mirror Database's 2026_10_08_000002_user_photos migration in this disposable PDO fixture.
+$db->exec('CREATE TABLE user_photos (
+    organization_id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    slot VARCHAR(16) NOT NULL,
+    version BIGINT UNSIGNED NOT NULL,
+    blob_id CHAR(48) NULL,
+    bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    sha256 CHAR(64) NULL,
+    width INT UNSIGNED NULL,
+    height INT UNSIGNED NULL,
+    PRIMARY KEY (organization_id,user_id,slot),
+    UNIQUE KEY (blob_id),
+    FOREIGN KEY (organization_id) REFERENCES file_quotas(organization_id)
+) ENGINE=InnoDB');
 // Mirror Database's 2026_10_14_000002_erased_person_blob_tracking migration
 // in this disposable PDO fixture; the P47 runtime job separately executes all migrations.
 $db->exec('ALTER TABLE file_garbage ADD COLUMN person_id CHAR(36) NULL, ADD INDEX file_garbage_person_id_index (person_id)');

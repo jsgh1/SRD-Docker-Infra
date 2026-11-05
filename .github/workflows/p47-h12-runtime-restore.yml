@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           repository: jsgh1/SRD-Backend
-          ref: d1f3052c3e734bc2357a45eada3ae32b04241877
+          ref: aab473c769a9e7e29fc78f33a0694121f67dd715
           path: sources/SRD-Backend
           persist-credentials: false
       - name: Check out earlier Gateway code for the isolated rollback smoke
@@ -40,14 +40,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           repository: jsgh1/SRD-Frontend
-          ref: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          ref: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
           path: sources/SRD-Frontend
           persist-credentials: false
       - name: Check out pinned Database
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           repository: jsgh1/SRD-Database
-          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          ref: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           path: sources/SRD-Database
           persist-credentials: false
       - name: Check out pinned Docs for clean multi-repo assembly
@@ -80,9 +80,9 @@ jobs:
       - name: Verify all source SHAs and assemble an isolated workspace
         shell: bash
         env:
-          BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
-          FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
-          DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          BACKEND_SHA: aab473c769a9e7e29fc78f33a0694121f67dd715
+          FRONTEND_SHA: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
+          DATABASE_SHA: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           DOCS_SHA: 14317523566e27d46bbc152fc1627cf1807f77f4
           INFRA_SHA: ${{ github.sha }}
         run: |
@@ -100,8 +100,8 @@ jobs:
         shell: bash
         env:
           P47_FIXTURE_RUN: 'true'
-          P47_BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
-          P47_DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          P47_BACKEND_SHA: aab473c769a9e7e29fc78f33a0694121f67dd715
+          P47_DATABASE_SHA: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           P47_INFRA_SHA: ${{ github.sha }}
           P47_MYSQL_IMAGE: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
           P47_ASSEMBLED: ${{ runner.temp }}/p47-assembled
@@ -110,8 +110,8 @@ jobs:
         shell: bash
         env:
           BACKEND_SHA: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
-          FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
-          DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          FRONTEND_SHA: bc455e353cfdc0cf280911808a5ecb7dcf488cb0
+          DATABASE_SHA: c396bde6e37f6be1b2f7566be3df010d947e9fe7
           DOCS_SHA: 14317523566e27d46bbc152fc1627cf1807f77f4
           INFRA_SHA: ${{ github.sha }}
         run: |
@@ -124,7 +124,7 @@ jobs:
         shell: bash
         env:
           P47_APP_ROLLBACK_SMOKE: 'true'
-          P47_BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+          P47_BACKEND_SHA: aab473c769a9e7e29fc78f33a0694121f67dd715
           P47_BACKEND_BASE_SHA: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
           P47_INFRA_SHA: ${{ github.sha }}
           P47_CURRENT_ASSEMBLED: ${{ runner.temp }}/p47-assembled

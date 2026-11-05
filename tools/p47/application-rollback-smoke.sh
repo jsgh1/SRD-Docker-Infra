@@ -26,12 +26,12 @@ build_candidate() {
     local revision="$1" workspace="$2" tag="$3"
     docker build --pull --build-arg SERVICE=gateway \
         --build-arg SRD_BACKEND_REVISION="$revision" \
-        --build-arg SRD_DATABASE_REVISION=a96fc6e40e18c19adb6588362f53fb0c8bce5e33 \
+        --build-arg SRD_DATABASE_REVISION=c396bde6e37f6be1b2f7566be3df010d947e9fe7 \
         --build-arg SRD_INFRA_REVISION="$P47_INFRA_SHA" \
         -f "$workspace/docker/php-production-fpm.Dockerfile" \
         -t "srd-p47-gateway-fpm:$tag" "$workspace"
     test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "srd-p47-gateway-fpm:$tag")" = "$revision"
-    test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' "srd-p47-gateway-fpm:$tag")" = a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+    test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' "srd-p47-gateway-fpm:$tag")" = c396bde6e37f6be1b2f7566be3df010d947e9fe7
     test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' "srd-p47-gateway-fpm:$tag")" = "$P47_INFRA_SHA"
     docker build --pull --build-arg SERVICE=gateway \
         --build-arg SRD_BACKEND_REVISION="$revision" \
