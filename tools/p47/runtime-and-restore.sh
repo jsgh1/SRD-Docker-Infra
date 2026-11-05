@@ -266,7 +266,7 @@ for service in "${services[@]}"; do
     if [[ "$service" == chat ]]; then test_reverb; fi
     if [[ "$service" == chat ]]; then
         docker image rm "$(nginx_image "$service")" >/dev/null
-    elif [[ "$service" != gateway && "$service" != records ]]; then
+    elif [[ "$service" != gateway && "$service" != records && "$service" != files ]]; then
         docker image rm "$(nginx_image "$service")" "$(fpm_image "$service")" >/dev/null
     fi
     check_resources
@@ -305,6 +305,7 @@ test -s "$photo_storage_dir/results.json"
 node -e 'const r=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if(!Number.isInteger(r.passed)||r.passed<1||r.failed!==0) process.exit(1); console.log(`PASS: Files storage behavior ${r.passed}/${r.passed+r.failed}; isolated synthetic MySQL and object storage.`)' "$photo_storage_dir/results.json"
 mysql_exec "$source_name" "$source_password" --execute "DROP DATABASE $files_probe_db"
 cp "$photo_storage_dir/results.json" "$artifact_dir/files-photo-storage-results.json"
+docker image rm "$(nginx_image files)" "$(fpm_image files)" >/dev/null
 log 'PASS: Files photo storage regression covered synthetic persistence, tenant isolation, authorization, versioning, quota, cleanup, concurrency and purge behavior with a controlled scanner double.'
 
 log 'Evaluating FastCGI east-west reachability on an isolated simulation of the shared production Compose internal network.'
