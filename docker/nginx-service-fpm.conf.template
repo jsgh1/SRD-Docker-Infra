@@ -1,0 +1,36 @@
+server {
+    listen 8000;
+    server_name _;
+    root /srv/${SERVICE}/public;
+    index index.php;
+    server_tokens off;
+    client_max_body_size 32m;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /index.php {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME /app/services/${SERVICE}/public/index.php;
+        fastcgi_param SCRIPT_NAME /index.php;
+        fastcgi_param DOCUMENT_ROOT /app/services/${SERVICE}/public;
+        fastcgi_param HTTP_AUTHORIZATION $http_authorization;
+        fastcgi_param HTTP_HOST $host;
+        fastcgi_param HTTP_X_FORWARDED_FOR $http_x_forwarded_for;
+        fastcgi_param HTTP_X_FORWARDED_HOST $http_x_forwarded_host;
+        fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+        fastcgi_param HTTP_X_FORWARDED_PORT $http_x_forwarded_port;
+        fastcgi_param HTTP_X_REAL_IP $http_x_real_ip;
+        fastcgi_pass ${SERVICE}-fpm:9000;
+        fastcgi_read_timeout 60s;
+    }
+
+    location ~ \.php(?:/|$) {
+        return 404;
+    }
+
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+}

@@ -1,0 +1,17 @@
+**/node_modules
+**/vendor
+**/.env
+.env
+.local
+dist
+docs/sources
+**/storage/logs/*
+**/storage/framework/sessions/*
+**/storage/framework/views/*
+**/storage/framework/cache/data/*
+**/bootstrap/cache/*.php
+**/*.sqlite
+**/dist
+.git
+**/.phpunit*
+**/tests
