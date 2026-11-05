@@ -119,63 +119,20 @@ http_status_from_nginx() {
 }
 test_reverb() {
     local name=p47-chat-reverb
-    docker run -d --name "$name" --network p47-source --publish 127.0.0.1:18082:8080 \
+    docker run -d --name "$name" --network p47-source --network-alias chat-reverb \
         "${app_env[@]}" -e DB_DATABASE=srd_chat -e DB_PASSWORD="$source_password" \
         "$(fpm_image chat)" php artisan reverb:start --host=0.0.0.0 --port=8080 >/dev/null
     containers+=("$name")
+    test -z "$(docker port "$name" 8080/tcp || true)"
     local ready=false attempt
     for attempt in $(seq 1 30); do
         if docker exec "$name" php -r '$s=@fsockopen("127.0.0.1",8080,$e,$m,1); if(!$s){exit(1);} fclose($s);' >/dev/null 2>&1; then ready=true; break; fi
         sleep 1
     done
     test "$ready" = true
-    node <<'NODE'
-const net = require('node:net');
-const crypto = require('node:crypto');
-const key = crypto.randomBytes(16).toString('base64');
-const socket = net.createConnection({ host: '127.0.0.1', port: 18082 });
-let data = Buffer.alloc(0), upgraded = false, pingSent = false, done = false;
-const timeout = setTimeout(() => fail('WebSocket Pusher ping/pong timed out'), 20000);
-function fail(message) { if (done) return; done = true; clearTimeout(timeout); socket.destroy(); console.error(message); process.exitCode = 1; }
-function frame(text) {
-  const payload = Buffer.from(text), mask = crypto.randomBytes(4);
-  const head = payload.length < 126 ? Buffer.from([0x81, 0x80 | payload.length]) : Buffer.from([0x81, 0xfe, payload.length >> 8, payload.length & 255]);
-  const body = Buffer.from(payload); for (let i = 0; i < body.length; i++) body[i] ^= mask[i % 4];
-  return Buffer.concat([head, mask, body]);
-}
-socket.on('connect', () => {
-  socket.write('GET /app/p47synthetickey20261104?protocol=7&client=js&version=8.4.0&flash=false HTTP/1.1\r\nHost: 127.0.0.1:18082\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + key + '\r\nSec-WebSocket-Version: 13\r\nOrigin: http://localhost\r\n\r\n');
-});
-socket.on('error', error => fail('WebSocket connection failed: ' + error.message));
-socket.on('data', chunk => {
-  if (done) return;
-  data = Buffer.concat([data, chunk]);
-  if (!upgraded) {
-    const end = data.indexOf('\r\n\r\n'); if (end < 0) return;
-    const header = data.subarray(0, end).toString('latin1');
-    const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-    const acceptHeader = header.match(/^sec-websocket-accept:\s*(.+)$/im);
-    if (!/^HTTP\/1\.1 101\b/m.test(header) || !acceptHeader || acceptHeader[1].trim() !== accept) return fail('Invalid WebSocket upgrade response');
-    data = data.subarray(end + 4); upgraded = true;
-  }
-  while (data.length >= 2) {
-    const opcode = data[0] & 0x0f, masked = (data[1] & 0x80) !== 0;
-    let length = data[1] & 0x7f, offset = 2;
-    if (length === 126) { if (data.length < 4) return; length = data.readUInt16BE(2); offset = 4; }
-    else if (length === 127) { if (data.length < 10) return; const big = data.readBigUInt64BE(2); if (big > 65536n) return fail('Unexpected oversized WebSocket frame'); length = Number(big); offset = 10; }
-    let mask; if (masked) { if (data.length < offset + 4) return; mask = data.subarray(offset, offset + 4); offset += 4; }
-    if (data.length < offset + length) return;
-    const payload = Buffer.from(data.subarray(offset, offset + length)); data = data.subarray(offset + length);
-    if (masked) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
-    if (opcode === 8) return fail('WebSocket closed before Pusher pong');
-    if (opcode === 9) { socket.write(Buffer.from([0x8a, 0x80, 1, 2, 3, 4])); continue; }
-    if (opcode !== 1) continue;
-    let event; try { event = JSON.parse(payload.toString('utf8')).event; } catch { continue; }
-    if (event === 'pusher:connection_established' && !pingSent) { pingSent = true; socket.write(frame(JSON.stringify({ event: 'pusher:ping', data: {} }))); }
-    if (event === 'pusher:pong') { done = true; clearTimeout(timeout); socket.end(); console.log('PASS: Pusher WebSocket upgrade and application ping/pong.'); return; }
-  }
-});
-NODE
+    docker run --rm -i --network p47-source --name p47-reverb-probe \
+        -e P47_REVERB_HOST=chat-reverb -e REVERB_APP_KEY=p47synthetickey20261104 \
+        "$(fpm_image chat)" php < "$(dirname "${BASH_SOURCE[0]}")/reverb-websocket-probe.php"
     log 'PASS: Reverb completed a Pusher WebSocket upgrade, established event, and application ping/pong; acceptance was not based on TCP alone.'
     remove_container "$name"
 }
