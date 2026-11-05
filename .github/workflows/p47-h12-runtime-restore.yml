@@ -1,0 +1,140 @@
+name: P47 H-12 all-service FPM and migrated restore
+
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p47-h12-runtime-restore-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  p47-runtime-and-restore:
+    name: P47 ephemeral FPM, schedulers, Reverb, and migrated restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Check out Docker infrastructure at the reviewed PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+      - name: Check out pinned Backend
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: d1f3052c3e734bc2357a45eada3ae32b04241877
+          path: sources/SRD-Backend
+          persist-credentials: false
+      - name: Check out earlier Gateway code for the isolated rollback smoke
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
+          path: sources/SRD-Backend-rollback
+          persist-credentials: false
+      - name: Check out pinned Frontend
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          path: sources/SRD-Frontend
+          persist-credentials: false
+      - name: Check out pinned Database
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: sources/SRD-Database
+          persist-credentials: false
+      - name: Check out pinned Docs for clean multi-repo assembly
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          path: sources/SRD-Docs
+          persist-credentials: false
+      - name: Set up Node for source validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.11.1'
+      - name: Lint workflow and run focused infrastructure tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" sources/SRD-Docker-Infra/.github/workflows/p47-h12-runtime-restore.yml
+          node --test \
+            sources/SRD-Docker-Infra/tools/tests/production-compose.test.mjs \
+            sources/SRD-Docker-Infra/tools/tests/release-manifest.test.mjs \
+            sources/SRD-Docker-Infra/tools/validate-source-shas.test.mjs
+          bash -n sources/SRD-Docker-Infra/tools/p47/runtime-and-restore.sh
+          git -C sources/SRD-Docker-Infra diff --check
+      - name: Install age for an ephemeral backup identity
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends age
+      - name: Verify all source SHAs and assemble an isolated workspace
+        shell: bash
+        env:
+          BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+          FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          DOCS_SHA: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          INFRA_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs
+          node --test sources/SRD-Docker-Infra/tools/validate-source-shas.test.mjs
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest "$RUNNER_TEMP/p47-assembled"
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs --check-provenance "$RUNNER_TEMP/p47-assembled/srd-provenance.json"
+          test -s "$RUNNER_TEMP/p47-assembled/services/gateway/artisan"
+          test -s "$RUNNER_TEMP/p47-assembled/services/records/database/migrations/2026_09_07_000002_records.php"
+          test -s "$RUNNER_TEMP/p47-assembled/services/files/database/migrations/2026_09_27_000002_create_folder_documents.php"
+      - name: Build and validate the candidate runtime and migrated-schema restore
+        shell: bash
+        env:
+          P47_FIXTURE_RUN: 'true'
+          P47_BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+          P47_DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          P47_INFRA_SHA: ${{ github.sha }}
+          P47_MYSQL_IMAGE: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+          P47_ASSEMBLED: ${{ runner.temp }}/p47-assembled
+        run: bash sources/SRD-Docker-Infra/tools/p47/runtime-and-restore.sh
+      - name: Assemble the earlier Gateway revision without modifying the current source cut
+        shell: bash
+        env:
+          BACKEND_SHA: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
+          FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          DOCS_SHA: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          INFRA_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend-rollback --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest "$RUNNER_TEMP/p47-rollback-base"
+      - name: Exercise real Gateway application image selection A/B/A
+        shell: bash
+        env:
+          P47_APP_ROLLBACK_SMOKE: 'true'
+          P47_BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+          P47_BACKEND_BASE_SHA: 67c2a4a3cd2efd4469fc72145d2b2a535aa9868e
+          P47_INFRA_SHA: ${{ github.sha }}
+          P47_CURRENT_ASSEMBLED: ${{ runner.temp }}/p47-assembled
+          P47_BASE_ASSEMBLED: ${{ runner.temp }}/p47-rollback-base
+        run: bash sources/SRD-Docker-Infra/tools/p47/application-rollback-smoke.sh
+      - name: Upload sanitized P47 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: p47-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/p47-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
