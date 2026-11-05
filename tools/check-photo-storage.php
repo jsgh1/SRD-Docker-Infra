@@ -14,6 +14,10 @@ function rejects(callable $f,string $type):void{try{$f();}catch(Throwable $e){ex
 $db=connection();$db->exec(file_get_contents(__DIR__.'/../services/files/database/schema.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/asset-photos.mysql.sql'));
 $db->exec(file_get_contents(__DIR__.'/../services/files/database/deleted-persons.mysql.sql'));
+// Mirror Database's 2026_10_14_000002_erased_person_blob_tracking migration
+// in this disposable PDO fixture; the P47 runtime job separately executes all migrations.
+$db->exec('ALTER TABLE file_garbage ADD COLUMN person_id CHAR(36) NULL, ADD INDEX file_garbage_person_id_index (person_id)');
+$db->exec('CREATE TABLE file_deleted_person_blobs (blob_id CHAR(48) PRIMARY KEY, organization_id CHAR(36) NOT NULL, person_id CHAR(36) NOT NULL, INDEX file_deleted_person_blobs_org_person_index (organization_id, person_id), FOREIGN KEY (blob_id) REFERENCES file_garbage(blob_id) ON DELETE CASCADE) ENGINE=InnoDB');
 $base=getenv('FILES_TEST_STORAGE_DIR')?:realpath(__DIR__.'/..').'/.local/photo-storage';
 if(!is_dir($base)&&!mkdir($base,0700,true))throw new RuntimeException('No se pudo preparar el almacenamiento temporal.');
 $root=$base.'/run-'.bin2hex(random_bytes(12));
@@ -72,7 +76,7 @@ $check('quota-blocks-upload-and-releases-after-cleanup',function()use($db,$root,
     $small->delete($p,$person,'property',1,true);rejects(fn()=>$small->put($p,$person,'document','sample.png',$png,2),PhotoQuotaExceeded::class);
     $small->collect($p['organization_id']);expect($small->put($p,$person,'document','sample.png',$png,2)['present']);
 });
-$check('outbox-metadata-no-content',function()use($db){$events=$db->query('SELECT * FROM outbox_events')->fetchAll(PDO::FETCH_ASSOC);expect(count($events)>=8);foreach($events as $event){expect(in_array($event['action'],['photo.created','photo.replaced','photo.deleted'],true));expect($event['published_at']===null);expect(!str_contains(json_encode($event),'sample.png'));}});
+$check('outbox-metadata-no-content',function()use($db){$events=$db->query('SELECT * FROM outbox_events')->fetchAll(PDO::FETCH_ASSOC);expect(count($events)>=8);foreach($events as $event){expect(in_array($event['action'],['photo.created','photo.replaced','photo.deleted','photo.person_deleted','asset_photo.created','asset_photo.deleted'],true));expect($event['published_at']===null);expect(!str_contains(json_encode($event),'sample.png'));}});
 $check('asset-slots-share-private-quota-and-live-object-protection',function()use($db,$root,$gate,$p,$png){
     $asset='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     $authorizer=fn(array $principal,string $id,string $action):bool=>$id===$asset && in_array($action,['inventory.read','inventory.write'],true);
