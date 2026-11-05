@@ -55,6 +55,7 @@ export function renderReleaseCompose(manifest) {
 
   const lines = [
     `# Generated from SRD release manifest ${manifest.releaseId}; do not edit by hand.`,
+    `# Source cut: backend=${manifest.sources.backend}; database=${manifest.sources.database}; docs=${manifest.sources.docs}; frontend=${manifest.sources.frontend}; infra=${manifest.sources.infra}`,
     '# Apply with compose.production.yaml and --no-build.',
     'services:',
   ];

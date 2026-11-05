@@ -54,3 +54,27 @@ test('release overlay prevents image/service-name confusion', () => {
   wrongImage.images.gateway = `ghcr.io/jsgh1/srd-identity@sha256:${'d'.repeat(64)}`;
   assert.throws(() => renderReleaseCompose(wrongImage), /must reference an image named srd-gateway/);
 });
+
+// P46 keeps the selected source cut visible in every generated release overlay.
+test('release A, release B, and reselecting A produce deterministic overlays with their selected source revisions', () => {
+  const releaseA = manifest();
+  releaseA.releaseId = 'p46-release-a';
+  releaseA.sources.backend = '1'.repeat(40);
+  releaseA.sources.infra = '2'.repeat(40);
+  const releaseB = manifest();
+  releaseB.releaseId = 'p46-release-b';
+  releaseB.sources.backend = '3'.repeat(40);
+  releaseB.sources.infra = '4'.repeat(40);
+  releaseB.images.gateway = 'ghcr.io/jsgh1/srd-gateway@sha256:' + 'f'.repeat(64);
+
+  const overlayA = renderReleaseCompose(releaseA);
+  const overlayB = renderReleaseCompose(releaseB);
+  const restoredA = renderReleaseCompose(releaseA);
+
+  assert.notEqual(overlayA, overlayB);
+  assert.equal(restoredA, overlayA);
+  assert.ok(overlayA.includes('backend=' + releaseA.sources.backend));
+  assert.ok(overlayA.includes('infra=' + releaseA.sources.infra));
+  assert.ok(overlayB.includes('backend=' + releaseB.sources.backend));
+  assert.ok(overlayB.includes('infra=' + releaseB.sources.infra));
+});
