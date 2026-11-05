@@ -87,3 +87,30 @@ test('release overlay includes no secrets and uses a manifest renderer tested se
   assert.match(renderer, /sha256:\[a-f0-9\]\{64\}/);
   assert.match(renderer, /compose\.production\.yaml and --no-build/);
 });
+
+// P46 tests the alternative runtime in CI without changing the production Compose topology.
+test('PHP-FPM/Nginx candidate is pinned and private while production remains on the Apache contract', () => {
+  const fpm = fs.readFileSync(path.join(root, 'docker/php-production-fpm.Dockerfile'), 'utf8');
+  const nginxDockerfile = fs.readFileSync(path.join(root, 'docker/nginx-service-fpm.Dockerfile'), 'utf8');
+  const nginxTemplate = fs.readFileSync(path.join(root, 'docker/nginx-service-fpm.conf.template'), 'utf8');
+
+  assert.match(fpm, /^FROM php:8\.4-fpm-bookworm@sha256:[a-f0-9]{64} AS runtime/m);
+  assert.match(fpm, /clear_env = no/);
+  assert.match(fpm, /security\.limit_extensions = \.php/);
+  assert.match(fpm, /pdo_mysql/);
+  assert.match(fpm, /post_max_size=32M/);
+  assert.match(fpm, /memory_limit=512M/);
+  assert.match(fpm, /EXPOSE 9000/);
+  assert.match(fpm, /CMD \["php-fpm", "--nodaemonize"\]/);
+  assert.match(nginxDockerfile, /^FROM nginx:stable-alpine@sha256:[a-f0-9]{64}/m);
+  assert.match(nginxTemplate, /listen 8000;/);
+  assert.ok(nginxTemplate.includes('fastcgi_pass ${SERVICE}-fpm:9000;'));
+  assert.ok(nginxTemplate.includes('fastcgi_param HTTP_AUTHORIZATION $http_authorization;'));
+  assert.ok(nginxTemplate.includes('/app/services/${SERVICE}/public/index.php'));
+  assert.ok(nginxTemplate.includes('location ~ \\.php(?:/|$)'));
+  assert.ok(nginxTemplate.includes('location ~ /\\.(?!well-known)'));
+  assert.ok(nginxDockerfile.includes('ENV NGINX_ENVSUBST_FILTER=^SERVICE$'));
+  assert.doesNotMatch(nginxTemplate, /listen 9000;/);
+  assert.equal(config.services.gateway.build.dockerfile, 'docker/php-production.Dockerfile');
+  assert.equal(Object.keys(config.services).some((name) => name.endsWith('-fpm')), false);
+});

@@ -1,0 +1,410 @@
+name: P46 H-12 isolated validation
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p46-source-cut:
+    name: P46 pinned source cut and workspace provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sources/SRD-Docker-Infra
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: d1f3052c3e734bc2357a45eada3ae32b04241877
+          path: sources/SRD-Backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Frontend
+          ref: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          path: sources/SRD-Frontend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: sources/SRD-Database
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Docs
+          ref: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          path: sources/SRD-Docs
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate P46 source revisions and assemble clean workspace
+        env:
+          BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+          FRONTEND_SHA: 757af358ba0200f00646e95ab8a4eefbb75f62d1
+          DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          DOCS_SHA: c242a5f3f2bd4923cf56990dca83203a31dcc1b4
+          INFRA_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs
+          node --test sources/SRD-Docker-Infra/tools/validate-source-shas.test.mjs
+          args=(--infra sources/SRD-Docker-Infra --backend sources/SRD-Backend --frontend sources/SRD-Frontend --database sources/SRD-Database --docs sources/SRD-Docs)
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --check
+          node sources/SRD-Docker-Infra/tools/assemble-workspace.mjs "${args[@]}" --dest assembled
+          node sources/SRD-Docker-Infra/tools/validate-source-shas.mjs --check-provenance assembled/srd-provenance.json
+          test -s assembled/srd-provenance.json
+          test -s assembled/services/gateway/artisan
+          test -s assembled/services/identity/artisan
+          test -s assembled/services/files/database/migrations/2026_09_27_000002_create_folder_documents.php
+
+  encrypted-restore:
+    name: P46 synthetic encrypted backup and restore
+    runs-on: ubuntu-latest
+    services:
+      mysql-source:
+        image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: p46-only-source-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot --password=$$MYSQL_ROOT_PASSWORD"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+      mysql-restore:
+        image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: p46-only-restore-password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot --password=$$MYSQL_ROOT_PASSWORD"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      P46_SOURCE_PASSWORD: p46-only-source-password
+      P46_RESTORE_PASSWORD: p46-only-restore-password
+      P46_SOURCE_PORT: '3306'
+      P46_RESTORE_PORT: '3307'
+      P46_MYSQL_IMAGE: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install age on the ephemeral runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends age
+      - name: Create, reject, restore, and verify synthetic encrypted backup
+        run: bash tools/p46/synthetic-restore.sh
+
+  php-fpm-nginx:
+    name: P46 Gateway and Identity PHP-FPM behind Nginx
+    runs-on: ubuntu-latest
+    env:
+      BACKEND_SHA: d1f3052c3e734bc2357a45eada3ae32b04241877
+      DATABASE_SHA: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+      INFRA_SHA: ${{ github.sha }}
+      APP_KEY: base64:MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: d1f3052c3e734bc2357a45eada3ae32b04241877
+          path: _backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: _database
+          persist-credentials: false
+      - name: Assemble only the representative Gateway and Identity services
+        run: |
+          set -euo pipefail
+          mkdir -p services packages
+          cp -a _backend/services/gateway services/gateway
+          cp -a _backend/services/identity services/identity
+          cp -a _backend/packages/php packages/php
+          cp -a _database/services/. services/
+          test -s services/gateway/composer.lock
+          test -s services/identity/composer.lock
+          test -s services/gateway/artisan
+          test -s services/identity/artisan
+          find services/identity/database/migrations -maxdepth 1 -type f -name '*.php' | grep -q .
+      - name: Build Gateway and Identity production FPM candidate images sequentially
+        run: |
+          set -euo pipefail
+          for service in gateway identity; do
+            docker build \
+              --build-arg SERVICE="$service" \
+              --build-arg SRD_BACKEND_REVISION="$BACKEND_SHA" \
+              --build-arg SRD_DATABASE_REVISION="$DATABASE_SHA" \
+              --build-arg SRD_INFRA_REVISION="$INFRA_SHA" \
+              -f docker/php-production-fpm.Dockerfile \
+              -t "srd-p46-$service-fpm:ci" .
+            test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "srd-p46-$service-fpm:ci")" = "$BACKEND_SHA"
+            test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.database.revision" }}' "srd-p46-$service-fpm:ci")" = "$DATABASE_SHA"
+            test "$(docker image inspect --format '{{ index .Config.Labels "io.srd.infra.revision" }}' "srd-p46-$service-fpm:ci")" = "$INFRA_SHA"
+          done
+          for service in gateway identity; do
+            docker build \
+              --build-arg SERVICE="$service" \
+              --build-arg SRD_BACKEND_REVISION="$BACKEND_SHA" \
+              --build-arg SRD_INFRA_REVISION="$INFRA_SHA" \
+              -f docker/nginx-service-fpm.Dockerfile \
+              -t "srd-p46-$service-nginx:ci" .
+          done
+      - name: Start FPM backends without publishing FastCGI and verify health over Nginx
+        shell: bash
+        run: |
+          set -euo pipefail
+          network=srd-p46-fpm
+          cleanup() {
+            docker rm -f srd-p46-gateway-nginx srd-p46-identity-nginx srd-p46-gateway-fpm srd-p46-identity-fpm >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network" >/dev/null
+          for service in gateway identity; do
+            docker run -d --name "srd-p46-$service-fpm" --network "$network" --network-alias "$service-fpm" \
+              -e APP_ENV=production -e APP_DEBUG=false -e APP_KEY="$APP_KEY" -e APP_URL=https://localhost \
+              -e SESSION_DRIVER=file -e SESSION_SECURE_COOKIE=true -e CACHE_STORE=file -e LOG_CHANNEL=stderr \
+              -e DB_CONNECTION=mysql -e DB_HOST=synthetic-unavailable -e DB_DATABASE=srd_synthetic \
+              -e DB_USERNAME=synthetic -e DB_PASSWORD=synthetic \
+              "srd-p46-$service-fpm:ci"
+            test -z "$(docker port "srd-p46-$service-fpm" 9000/tcp || true)"
+          done
+          docker run -d --name srd-p46-gateway-nginx --network "$network" --network-alias gateway \
+            --publish 127.0.0.1:18080:8000 srd-p46-gateway-nginx:ci
+          docker run -d --name srd-p46-identity-nginx --network "$network" --network-alias identity \
+            --publish 127.0.0.1:18081:8000 srd-p46-identity-nginx:ci
+          docker exec srd-p46-gateway-fpm php-fpm -t
+          docker exec srd-p46-identity-fpm php-fpm -t
+          docker exec srd-p46-gateway-nginx nginx -t
+          docker exec srd-p46-identity-nginx nginx -t
+          gateway_modules=$(docker exec srd-p46-gateway-fpm php -m)
+          identity_modules=$(docker exec srd-p46-identity-fpm php -m)
+          gateway_phpinfo=$(docker exec srd-p46-gateway-fpm php -i)
+          [[ $'\n'"$gateway_modules"$'\n' == *$'\npdo_mysql\n'* ]]
+          [[ $'\n'"$gateway_modules"$'\n' == *$'\ncurl\n'* ]]
+          [[ $'\n'"$identity_modules"$'\n' == *$'\npdo_mysql\n'* ]]
+          printf '%s\n' "$gateway_phpinfo" | grep '^memory_limit => 256M' >/dev/null
+          docker exec srd-p46-identity-fpm php artisan schedule:list --no-ansi
+          for port in 18080 18081; do
+            ready=false
+            for attempt in $(seq 1 45); do
+              status=$(curl --silent --show-error --max-time 3 --output "$RUNNER_TEMP/p46-up-$port.json" --write-out '%{http_code}' "http://127.0.0.1:$port/up" 2>/dev/null || true)
+              if [[ "$status" == 200 ]]; then ready=true; break; fi
+              sleep 2
+            done
+            test "$ready" = true
+            test -s "$RUNNER_TEMP/p46-up-$port.json"
+          done
+          test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/robots.txt)" = 200
+          test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18081/robots.txt)" = 200
+          echo "PASS: Gateway and Identity /up return HTTP 200 through Nginx to FPM; FPM 9000 is not host-published; PHP extensions and Identity scheduler CLI are available."
+          {
+            echo "## P46 PHP-FPM/Nginx candidate"
+            echo "- PASS: Gateway and Identity built from pinned Backend/Database sources with Infra provenance labels."
+            echo "- PASS: HTTP /up and static robots.txt tested through Nginx to PHP-FPM."
+            echo "- PASS: port 9000 was not published; FPM config, Gateway extensions and Identity scheduler:list validated."
+            echo "- Limit: representative CI topology only; the production Compose still runs Apache for all 11 services."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  migration-rollback:
+    name: P46 exact reversible migration in synthetic MySQL
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: p46-only-migration-password
+          MYSQL_DATABASE: srd_p46_migration
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot --password=$$MYSQL_ROOT_PASSWORD"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: srd_p46_migration
+      DB_USERNAME: root
+      DB_PASSWORD: p46-only-migration-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Backend
+          ref: d1f3052c3e734bc2357a45eada3ae32b04241877
+          path: _backend
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jsgh1/SRD-Database
+          ref: a96fc6e40e18c19adb6588362f53fb0c8bce5e33
+          path: _database
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, zip, gd, fileinfo
+          tools: composer:v2
+          coverage: none
+      - name: Assemble only Files, the shared PHP package and one audited migration
+        run: |
+          set -euo pipefail
+          mkdir -p assembled/services assembled/packages
+          cp -a _backend/services/files assembled/services/files
+          cp -a _backend/packages/php assembled/packages/php
+          mkdir -p assembled/services/files/database/migrations
+          cp _database/services/files/database/migrations/2026_09_27_000002_create_folder_documents.php assembled/services/files/database/migrations/
+          cd assembled/services/files
+          composer install --no-dev --no-interaction --prefer-dist --no-progress
+          php -l database/migrations/2026_09_27_000002_create_folder_documents.php
+      - name: Apply, rollback, reapply and verify only the synthetic migration
+        env:
+          P46_FILES_ROOT: assembled/services/files
+        run: bash tools/p46/test-migration-rollback.sh
+
+  release-preflight-rollback:
+    name: P46 immutable release selection and synthetic image rollback
+    env:
+      P46_INFRA_SHA: ${{ github.sha }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run release manifest unit tests
+        run: node --test tools/tests/release-manifest.test.mjs
+      - name: Exercise immutable A/B/A selection and digest availability in an ephemeral registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry=srd-p46-registry
+          app=srd-p46-release-app
+          cleanup() {
+            docker rm -f "$app" "$registry" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name "$registry" --publish 127.0.0.1:5000:5000 \
+            registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:5000/v2/ >/dev/null; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          mkdir -p "$RUNNER_TEMP/p46-release-context"
+          cat > "$RUNNER_TEMP/p46-release-context/Dockerfile" <<'DOCKERFILE'
+          FROM nginx:stable-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
+          ARG RELEASE_ID
+          RUN rm -f /etc/nginx/conf.d/default.conf \
+           && printf 'server { listen 8000; server_name _; location / { default_type text/plain; return 200 "%s\n"; } }\n' "$RELEASE_ID" > /etc/nginx/conf.d/default.conf
+          EXPOSE 8000
+          DOCKERFILE
+          docker build --build-arg RELEASE_ID=synthetic-release-a -t srd-p46-release:a "$RUNNER_TEMP/p46-release-context"
+          docker build --build-arg RELEASE_ID=synthetic-release-b -t srd-p46-release:b "$RUNNER_TEMP/p46-release-context"
+          names=(gateway identity configuration records audit files calendar notifications treasury inventory chat web)
+          push_release() {
+            local release="$1" image="$2" service reference output digest
+            local digest_list=()
+            for service in "${names[@]}"; do
+              reference="127.0.0.1:5000/srd-$service:p46-$release"
+              docker tag "$image" "$reference"
+              output=$(docker push "$reference" 2>&1) || { printf '%s\n' "$output"; return 1; }
+              digest=$(printf '%s\n' "$output" | grep -oE 'sha256:[a-f0-9]{64}' | tail -n 1)
+              test -n "$digest"
+              digest_list+=("$digest")
+            done
+            if [[ "$release" == a ]]; then P46_A_DIGESTS=$(IFS=,; printf '%s' "${digest_list[*]}"); export P46_A_DIGESTS; fi
+            if [[ "$release" == b ]]; then P46_B_DIGESTS=$(IFS=,; printf '%s' "${digest_list[*]}"); export P46_B_DIGESTS; fi
+          }
+          push_release a srd-p46-release:a
+          push_release b srd-p46-release:b
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { renderReleaseCompose } from './scripts/render-release-compose.mjs';
+          const names = ['gateway','identity','configuration','records','audit','files','calendar','notifications','treasury','inventory','chat','web'];
+          function buildManifest(label, suffix, values) {
+            const digests = values.split(',');
+            if (digests.length !== names.length || digests.some((value) => !/^sha256:[a-f0-9]{64}$/.test(value))) throw new Error('Incomplete test digest set');
+            const sources = {
+              backend: 'd1f3052c3e734bc2357a45eada3ae32b04241877',
+              database: 'a96fc6e40e18c19adb6588362f53fb0c8bce5e33',
+              docs: 'c242a5f3f2bd4923cf56990dca83203a31dcc1b4',
+              frontend: '757af358ba0200f00646e95ab8a4eefbb75f62d1',
+              infra: suffix === 'a' ? '0ad680415171bec4552e01a146812b6b3f3082e0' : process.env.P46_INFRA_SHA,
+            };
+            const images = Object.fromEntries(names.map((name, index) => [name, '127.0.0.1:5000/srd-' + name + '@' + digests[index]]));
+            const manifest = { schemaVersion: 1, releaseId: 'p46-synthetic-' + label, sources, images };
+            const overlay = renderReleaseCompose(manifest);
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-' + label + '.json', JSON.stringify(manifest));
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-' + label + '.yaml', overlay);
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-' + label + '-images.txt', Object.values(images).join('\n') + '\n');
+            if (!overlay.includes('backend=' + sources.backend) || !overlay.includes('infra=' + sources.infra)) throw new Error('Selected source revisions are missing from the overlay');
+          }
+          buildManifest('a', 'a', process.env.P46_A_DIGESTS);
+          buildManifest('b', 'b', process.env.P46_B_DIGESTS);
+          NODE
+          for release in a b; do
+            while IFS= read -r image; do docker pull "$image" >/dev/null; done < "$RUNNER_TEMP/p46-$release-images.txt"
+          done
+          cmp "$RUNNER_TEMP/p46-a.yaml" <(node --input-type=module -e "import fs from 'node:fs'; import {renderReleaseCompose} from './scripts/render-release-compose.mjs'; process.stdout.write(renderReleaseCompose(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/p46-a.json','utf8'))))")
+          gateway_a=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/p46-a.json','utf8')).images.gateway")
+          gateway_b=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/p46-b.json','utf8')).images.gateway")
+          run_and_expect() {
+            local image="$1" expected="$2"
+            docker rm -f "$app" >/dev/null 2>&1 || true
+            docker run -d --name "$app" --publish 127.0.0.1:18082:8000 "$image" >/dev/null
+            for attempt in $(seq 1 30); do
+              if [[ "$(curl --silent --show-error --max-time 2 http://127.0.0.1:18082/ 2>/dev/null || true)" == "$expected" ]]; then return 0; fi
+              sleep 1
+            done
+            echo "Selected synthetic image did not return the expected release marker." >&2
+            return 1
+          }
+          run_and_expect "$gateway_a" synthetic-release-a
+          run_and_expect "$gateway_b" synthetic-release-b
+          selected_overlay="$RUNNER_TEMP/p46-selected.yaml"
+          node --input-type=module -e "import fs from 'node:fs'; import {renderReleaseCompose} from './scripts/render-release-compose.mjs'; fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-selected.yaml',renderReleaseCompose(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/p46-a.json','utf8'))))"
+          cmp "$RUNNER_TEMP/p46-a.yaml" "$selected_overlay"
+          run_and_expect "$gateway_a" synthetic-release-a
+
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { renderReleaseCompose } from './scripts/render-release-compose.mjs';
+          const path = process.env.RUNNER_TEMP + '/p46-a.json';
+          const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+          manifest.images.gateway = '127.0.0.1:5000/srd-gateway@sha256:' + 'f'.repeat(64);
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-ghost.json', JSON.stringify(manifest));
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/p46-ghost.yaml', renderReleaseCompose(manifest));
+          NODE
+          ghost=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/p46-ghost.json','utf8')).images.gateway")
+          if docker pull "$ghost" > "$RUNNER_TEMP/p46-ghost-pull.log" 2>&1; then
+            echo "FAIL: registry accepted a syntactically valid but nonexistent gateway digest." >&2
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/p46-ghost-pull.log"
+          {
+            echo "## P46 immutable release selection"
+            echo "- PASS: synthetic A and B manifests rendered with selected source SHAs and real local-registry digests for all 12 image names."
+            echo "- PASS: selected A, selected B, then reselected A; the synthetic Gateway HTTP marker returned A/B/A."
+            echo "- PASS: a validly formatted nonexistent Gateway digest was rejected by the local registry."
+            echo "- Limit: synthetic Nginx container/image selection only; this is not a production deployment or SRD application rollback."
+          } >> "$GITHUB_STEP_SUMMARY"
