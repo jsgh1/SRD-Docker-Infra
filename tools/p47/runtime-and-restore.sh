@@ -423,7 +423,7 @@ index_inventory() {
 }
 foreign_key_inventory() {
     mysql_exec "$1" "$2" --batch --skip-column-names --execute \
-      "SELECT CONCAT(constraint_schema,'.',table_name,'.',constraint_name,'|',referenced_table_schema,'.',referenced_table_name) FROM information_schema.referential_constraints WHERE constraint_schema LIKE 'srd!_%' ESCAPE '!' ORDER BY constraint_schema,table_name,constraint_name"
+      "SELECT CONCAT(k.constraint_schema,'.',k.table_name,'.',k.constraint_name,'|',k.referenced_table_schema,'.',k.referenced_table_name,'|',k.column_name,'|',k.referenced_column_name,'|',k.ordinal_position,'|',r.update_rule,'|',r.delete_rule) FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.table_name=k.table_name AND r.constraint_name=k.constraint_name WHERE k.constraint_schema LIKE 'srd!_%' ESCAPE '!' AND k.referenced_table_name IS NOT NULL ORDER BY k.constraint_schema,k.table_name,k.constraint_name,k.ordinal_position"
 }
 for kind in schema column index foreign_key; do
     case "$kind" in schema) function=schema_inventory ;; column) function=column_inventory ;; index) function=index_inventory ;; foreign_key) function=foreign_key_inventory ;; esac
