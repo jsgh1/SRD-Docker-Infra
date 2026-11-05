@@ -61,12 +61,11 @@ run_candidate() {
         -e DB_CONNECTION=mysql -e DB_HOST=127.0.0.1 -e DB_DATABASE=srd_gateway \
         -e DB_USERNAME=synthetic -e DB_PASSWORD=synthetic \
         "$fpm" >/dev/null
-    docker run -d --name p47-rollback-nginx --network "$network" \
-        --publish 127.0.0.1:18083:8000 "$nginx" >/dev/null
+    docker run -d --name p47-rollback-nginx --network "$network" "$nginx" >/dev/null
     test -z "$(docker port p47-rollback-fpm 9000/tcp || true)"
     for attempt in $(seq 1 45); do
-        status="$(curl --silent --show-error --max-time 3 --output "$RUNNER_TEMP/p47-rollback-$label.json" \
-            --write-out '%{http_code}' http://127.0.0.1:18083/up 2>/dev/null || true)"
+        status="$(docker exec p47-rollback-nginx sh -c 'wget -S -O /dev/null "http://127.0.0.1:8000/up" 2>&1' \
+            | sed -nE 's/.*HTTP\/1\.[01] ([0-9]{3})( .*)?$/\1/p' | tail -n 1 || true)"
         [[ "$status" == 200 ]] && break
         sleep 2
     done
@@ -76,6 +75,8 @@ run_candidate() {
         docker logs p47-rollback-nginx 2>&1 | tail -n 30 >&2 || true
         return 1
     fi
+    docker exec p47-rollback-nginx sh -c 'wget -q -O - "http://127.0.0.1:8000/up"' \
+        > "$RUNNER_TEMP/p47-rollback-$label.json"
     test -s "$RUNNER_TEMP/p47-rollback-$label.json"
     printf '%s\n' "$expected" > "$RUNNER_TEMP/p47-rollback-$label.sha256"
     sha256sum "$RUNNER_TEMP/p47-rollback-$label.json" | awk '{print $1}' >> "$RUNNER_TEMP/p47-rollback-$label.sha256"
